@@ -1,0 +1,2189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Provendoc — Representation Observability</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117;
+  --panel: #171a23;
+  --panel-2: #1e222d;
+  --border: #2a2f3d;
+  --text: #e4e6eb;
+  --text-dim: #9aa0ac;
+  --accent: #4a9eff;
+  --good: #3ddc84;
+  --warn: #ffb020;
+  --bad: #ff5c5c;
+  --orange: #ff8c00;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--text);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  font-size: 13px;
+}
+
+/* ---------- Header ---------- */
+header {
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  padding: 10px 16px; display: flex; align-items: center;
+  justify-content: space-between; flex-shrink: 0;
+}
+.brand { font-size: 15px; font-weight: 600; }
+.brand span { color: var(--accent); }
+.brand .subtitle { font-size: 10px; color: var(--text-dim); font-weight: 400; }
+.run-id { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-dim); }
+.hdr-stats { display: flex; gap: 18px; align-items: center; }
+.hdr-stat { text-align: right; }
+.hdr-stat .v { font-size: 15px; font-weight: 600; }
+.hdr-stat .l { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+/* 质量总分降权：小字次要 */
+.hdr-stat.dimmed .v { font-size: 12px; color: var(--text-dim); }
+.hdr-stat.dimmed .l { font-size: 9px; }
+
+.btn {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 4px; padding: 5px 12px; font-size: 11px;
+  cursor: pointer; font-weight: 500;
+}
+
+/* ---------- Boundary annotation ---------- */
+.bnd-anno-bar {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  padding: 4px 0; margin: 0; background: var(--panel-2);
+  border: 1px solid var(--border); border-left: none; border-right: none;
+  font-size: 10px; color: var(--text-dim);
+}
+.bnd-btn {
+  background: none; border: 1px solid var(--border); border-radius: 3px;
+  padding: 2px 8px; font-size: 10px; cursor: pointer; color: var(--text-dim);
+  transition: all .15s;
+}
+.bnd-btn:hover { border-color: var(--accent); color: var(--text); }
+.bnd-btn.ok.active { background: rgba(61,220,132,.15); border-color: var(--good); color: var(--good); }
+.bnd-btn.merge.active { background: rgba(255,176,32,.15); border-color: var(--warn); color: var(--warn); }
+.bnd-btn.split.active { background: rgba(255,92,92,.15); border-color: var(--bad); color: var(--bad); }
+.bnd-anno-bar.dirty .bnd-clear { color: var(--accent); }
+.btn:hover { filter: brightness(1.15); }
+.btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
+.btn.good { background: var(--good); color: #06240f; }
+.btn.bad  { background: var(--bad); }
+
+/* ---------- Main 3-column ---------- */
+.main { flex: 1; display: flex; min-height: 0; }
+
+.col-files {
+  width: 230px; flex: 0 0 230px; background: var(--panel);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+}
+.col-doc, .col-output {
+  flex: 1 1 0; display: flex; flex-direction: column; min-width: 0;
+}
+.col-doc { border-right: 1px solid var(--border); }
+
+/* 分隔条有明确的可见抓手和更大的命中区。 */
+.resize-handle {
+  width: 12px; flex: 0 0 12px; cursor: col-resize; background: var(--bg);
+  position: relative; z-index: 10;
+}
+.resize-handle::before {
+  content: ''; position: absolute; inset: 0 4px; background: var(--border); transition: background .15s;
+}
+.resize-handle:hover::before, .resize-handle.dragging::before { background: var(--accent); }
+.resize-handle::after {
+  content: '⋮'; position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--text-dim); font-size: 12px; pointer-events: none;
+}
+body.resizing { user-select: none; cursor: col-resize; }
+
+@media (max-width: 860px) {
+  body { overflow: auto; min-height: 100vh; height: auto; }
+  header { position: sticky; top: 0; z-index: 20; }
+  .hdr-stats { gap: 8px; }
+  .hdr-stat:nth-child(3), .hdr-stat:nth-child(4), .hdr-stat:nth-child(5) { display: none; }
+  .main { flex: none; min-height: 0; flex-direction: column; overflow: visible; }
+  .col-files { width: 100% !important; flex: 0 0 210px !important; }
+  .col-doc, .col-output { flex: 0 0 auto !important; min-height: 360px; width: 100% !important; }
+  .resize-handle { display: none; }
+  .analysis-drawer { flex: none; }
+  .analysis-content { height: 280px !important; }
+  .layer-tabs { overflow-x: auto; }
+  .layer-tab { white-space: nowrap; }
+}
+
+.col-head {
+  padding: 7px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--panel-2); flex-shrink: 0; gap: 8px;
+}
+.col-head h3 {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--text-dim); white-space: nowrap;
+}
+.col-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+
+/* file list: search is the primary control; one compact selector replaces redundant filter tabs */
+.file-search {
+  margin: 8px; padding: 6px 8px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-size: 11px; width: calc(100% - 16px);
+}
+.file-toolbar { display: flex; gap: 6px; padding: 0 8px 7px; }
+.file-select {
+  min-width: 0; flex: 1; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--panel-2); color: var(--text-dim); font-size: 10px;
+}
+.file-list { flex: 1; overflow-y: auto; padding: 0 6px 10px; }
+.file-item {
+  padding: 6px 8px; border-radius: 4px; cursor: pointer;
+  border-left: 2px solid transparent; margin-bottom: 1px;
+}
+.file-item:hover { background: var(--panel-2); }
+.file-item.active {
+  background: rgba(74,158,255,.12); border-left-color: var(--accent);
+}
+.file-item .fn {
+  font-size: 11px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; margin-bottom: 2px;
+}
+.file-item .fm {
+  font-size: 10px; color: var(--text-dim);
+  display: flex; gap: 8px; align-items: center;
+}
+.dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+
+.ftag {
+  font-size: 9px; padding: 1px 4px; border-radius: 3px; white-space: nowrap;
+  background: rgba(255,255,255,.06);
+}
+.ftag.sampled { color: #4a9eff; }
+.ftag.density { color: #b48cf0; }
+.ftag.outlier { color: var(--bad); background: rgba(255,92,92,.1); }
+
+.group-header {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--panel-2); backdrop-filter: blur(2px);
+  padding: 5px 8px; margin-top: 4px;
+  font-size: 10px; font-weight: 600; letter-spacing: .3px;
+  color: var(--text-dim); text-transform: uppercase;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); border-top: 1px solid var(--border);
+}
+.group-header .gcount { font-weight: 400; opacity: .7; text-transform: none; }
+
+.doc-text {
+font-family: ui-monospace, "Cascadia Code", monospace;
+font-size: 11.5px; line-height: 1.65; white-space: pre-wrap;
+word-break: break-word; color: #c8ccd4;
+}
+.iv-char {
+display: inline-block; padding: 0 4px; margin: 0 1px;
+border: 1px dashed var(--warn); border-radius: 3px;
+font-size: 9.5px; line-height: 1.35; color: var(--warn);
+background: color-mix(in srgb, var(--warn) 10%, transparent);
+vertical-align: 1px; cursor: help; user-select: none;
+}
+.iv-legend {
+display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+padding: 4px 10px; border-bottom: 1px solid var(--border);
+font-size: 10px; color: var(--text-dim);
+}
+.source-preview-notice {
+padding: 5px 10px; border-bottom: 1px solid rgba(255,176,32,.45);
+background: rgba(255,176,32,.08); color: var(--warn); font-size: 10px;
+line-height: 1.45;
+}
+.nav-btn {
+  background: var(--panel); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; padding: 2px 9px;
+  cursor: pointer; font-size: 12px;
+}
+.nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.nav-btn:disabled { opacity: .3; cursor: not-allowed; }
+.nav-pos { font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace; }
+
+.layer-tabs { display: flex; gap: 2px; }
+.layer-tab {
+  padding: 3px 9px; font-size: 10px; border-radius: 3px;
+  cursor: pointer; color: var(--text-dim); border: 1px solid transparent;
+}
+.layer-tab:hover { color: var(--text); }
+.layer-tab.active {
+  background: rgba(74,158,255,.12); color: var(--accent);
+  border-color: rgba(74,158,255,.3);
+}
+
+.md-view { font-size: 12.5px; line-height: 1.7; }
+.md-view h1 {
+font-size: 12px; color: var(--accent); margin: 16px 0 6px;
+padding: 4px 8px; background: rgba(74,158,255,.08);
+border-left: 2px solid var(--accent); border-radius: 0 3px 3px 0;
+font-weight: 600; letter-spacing: .5px;
+}
+.md-view h1:first-child { margin-top: 0; }
+.md-view h2 { font-size: 13px; margin: 12px 0 5px; color: #d8dbe2; }
+.md-view h3 { font-size: 12px; margin: 10px 0 4px; color: #c8ccd4; }
+.md-view p { margin: 5px 0; color: #b8bcc6; }
+.md-view code {
+  background: var(--panel-2); padding: 1px 4px;
+  border-radius: 3px; font-size: 11px;
+}
+.md-view pre {
+  background: var(--panel-2); padding: 8px; border-radius: 4px;
+  overflow-x: auto; margin: 6px 0;
+}
+.md-view ul, .md-view ol { margin: 5px 0 5px 20px; color: #b8bcc6; }
+.md-view blockquote {
+  border-left: 2px solid var(--border); padding-left: 10px;
+  color: var(--text-dim); margin: 6px 0;
+}
+.json-view {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  line-height: 1.55; white-space: pre-wrap;
+  word-break: break-word; color: #b8bcc6;
+}
+
+/* 信息可视化原子组件：只呈现决策所需的摘要，完整 JSON 留在产物链接中。 */
+.viz-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:7px; margin:7px 0 10px; }
+.viz-card { padding:8px; border:1px solid var(--border); border-radius:5px; background:var(--panel-2); }
+.viz-card .label { font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.35px; }
+.viz-card .value { margin-top:3px; font-size:16px; font-weight:700; }
+.score-row { display:grid; grid-template-columns:minmax(88px,1fr) minmax(90px,2fr) 38px; gap:8px; align-items:center; margin:6px 0; font-size:10px; }
+.score-track { height:7px; overflow:hidden; border-radius:5px; background:var(--panel-2); }
+.score-fill { height:100%; border-radius:5px; }
+.chip-row { display:flex; flex-wrap:wrap; gap:5px; margin:6px 0; }
+.chip { padding:3px 6px; border:1px solid var(--border); border-radius:999px; color:var(--text-dim); font-size:10px; background:var(--panel-2); }
+.inline-meta { display:flex; flex-wrap:wrap; gap:6px; margin:7px 0; font-size:10px; color:var(--text-dim); }
+.inline-meta span { padding:3px 6px; border-radius:3px; background:rgba(255,255,255,.04); }
+
+/* ---------- Secondary run analysis drawer ---------- */
+.analysis-drawer {
+  flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--border);
+}
+.analysis-toggle {
+  width: 100%; min-height: 42px; display: flex; align-items: center; gap: 10px;
+  padding: 0 16px; border: 0; background: var(--panel-2); color: var(--text);
+  cursor: pointer; text-align: left;
+}
+.analysis-toggle:hover { background: #232938; }
+.analysis-toggle .chevron { color: var(--accent); font-size: 16px; width: 14px; }
+.analysis-toggle .title { font-size: 11px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; }
+.analysis-toggle .hint { color: var(--text-dim); font-size: 11px; }
+.analysis-toggle .state { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+.analysis-content { display: none; height: 320px; min-height: 180px; flex-direction: column; overflow: hidden; }
+.analysis-drawer.open .analysis-content { display: flex; }
+.analysis-drawer.open .analysis-toggle { border-bottom: 1px solid var(--border); }
+.analysis-resizer {
+height: 14px; flex: 0 0 14px; cursor: row-resize; position: relative; background: var(--bg); touch-action: none;
+}
+.analysis-resizer::before {
+content: '⠿'; position: absolute; inset: 0; display: grid; place-items: center;
+color: var(--text-dim); font-size: 13px; letter-spacing: 2px;
+}
+.analysis-resizer:hover::before, .analysis-resizer.dragging::before { color: var(--accent); }
+.bottom {
+flex: 1 1 auto; min-height: 0; background: var(--panel); display: flex;
+overflow-x: auto; overflow-y: hidden;
+}
+.bpanel {
+  flex: 1; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); min-width: 0;
+}
+.bpanel:last-child { border-right: none; }
+.bpanel-head {
+  padding: 6px 12px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-dim); border-bottom: 1px solid var(--border);
+  background: var(--panel-2); flex-shrink: 0;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.bpanel-body { flex: 1; overflow-y: auto; padding: 8px 12px; min-height: 0; }
+.chart-wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+
+.metric {
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 0; font-size: 11px;
+}
+.metric .mk { color: var(--text-dim); width: 96px; flex-shrink: 0; cursor: pointer; }
+.metric .mk.clickable { color: var(--accent); text-decoration: underline dashed; text-underline-offset: 2px; }
+.metric .mbar {
+  flex: 1; height: 5px; background: var(--panel-2);
+  border-radius: 3px; overflow: hidden;
+}
+.metric .mfill { height: 100%; border-radius: 3px; transition: width .25s; }
+.metric .mv {
+  font-family: ui-monospace, monospace; width: 40px;
+  text-align: right; flex-shrink: 0;
+}
+
+/* confidence indicator */
+.conf-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  margin-left: 3px; vertical-align: middle;
+}
+.conf-dot.high { background: var(--good); }
+.conf-dot.med { background: var(--warn); }
+.conf-dot.low { background: var(--bad); opacity: .5; }
+
+/* drill-down evidence */
+.drill-panel {
+  margin: 4px 0 8px; padding: 6px 8px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 4px; font-size: 10px;
+}
+.drill-panel .drill-title { color: var(--warn); font-weight: 600; margin-bottom: 4px; }
+.drill-panel .drill-item {
+  padding: 3px 0; border-bottom: 1px solid rgba(42,47,61,.5);
+  color: var(--text-dim); line-height: 1.5;
+}
+.drill-panel .drill-item:last-child { border-bottom: none; }
+
+.diag {
+  padding: 5px 8px; border-radius: 4px; margin-bottom: 4px;
+  font-size: 11px; border-left: 2px solid;
+}
+.diag.warn { background: rgba(255,176,32,.08); border-color: var(--warn); }
+.diag.bad  { background: rgba(255,92,92,.08); border-color: var(--bad); }
+.diag.ok   { background: rgba(61,220,132,.08); border-color: var(--good); }
+.diag .dt { font-weight: 600; margin-bottom: 1px; }
+.diag .dd { color: var(--text-dim); font-size: 10px; }
+
+.empty {
+  color: var(--text-dim); font-size: 11px;
+  text-align: center; padding: 24px 12px;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4050; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="brand">Provendoc <span data-i18n="Representation Observability">Representation Observability</span></div>
+    <div class="run-id" id="runId"></div>
+  </div>
+  <div class="hdr-stats">
+    <div class="hdr-stat"><div class="v" id="sFiles">-</div><div class="l">Files</div></div>
+    <div class="hdr-stat"><div class="v" id="sRate">-</div><div class="l">Success</div></div>
+    <div class="hdr-stat dimmed"><div class="v" id="sQuality">-</div><div class="l">Avg Quality</div></div>
+    <div class="hdr-stat"><div class="v" id="sOutliers">0</div><div class="l">Outliers</div></div>
+    <div class="hdr-stat"><div class="v" id="sAnno" style="cursor:pointer;" onclick="toggleAnnoMode()" title="点击切换边界标注模式">0</div><div class="l" id="sAnnoLabel" style="cursor:pointer;" onclick="toggleAnnoMode()">Anno</div></div>
+    <button class="btn ghost" id="langToggle" onclick="toggleLanguage()">中文</button>
+    <button class="btn ghost" onclick="resetLayout()" title="恢复默认面板尺寸">Reset layout</button>
+    <button class="btn ghost" onclick="exportAll()">Export</button>
+  </div>
+</header>
+
+<div class="main">
+  <div class="col-files">
+    <div class="col-head"><h3 data-i18n="Files">Files</h3><span class="nav-pos" id="fileCount"></span></div>
+    <input class="file-search" id="fileSearch" placeholder="搜索路径或文件名..." oninput="renderFileList()">
+    <div class="file-toolbar">
+      <select class="file-select" id="fileDomain" aria-label="按领域筛选" onchange="setDomainFilter(this.value)"></select>
+      <select class="file-select" id="fileSort" aria-label="文件排序" onchange="setSort(this.value)">
+        <option value="default">原始顺序</option>
+        <option value="quality_asc">质量分从低到高</option>
+        <option value="outlier">优先异常项</option>
+      </select>
+    </div>
+    <div class="file-list" id="fileList"></div>
+  </div>
+  <div class="resize-handle" id="filesResizer" role="separator" aria-label="调整文件列表宽度" title="拖动调整文件列表宽度"></div>
+
+  <div class="col-doc">
+    <div class="col-head">
+      <h3 data-i18n="Source Document">Source Document</h3>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="nav-btn" id="prevBtn" onclick="navFile(-1)">‹</button>
+        <span class="nav-pos" id="navPos">0 / 0</span>
+        <button class="nav-btn" id="nextBtn" onclick="navFile(1)">›</button>
+      </div>
+    </div>
+    <div class="col-body"><div class="source-preview-notice" id="sourcePreviewNotice" style="display:none;"></div><div class="iv-legend" id="ivLegend" style="display:none;"></div><div class="doc-text" id="docText"></div></div>
+  </div>
+  <div class="resize-handle" id="docResizer" role="separator" aria-label="调整原文与输出面板宽度" title="拖动调整原文与输出面板宽度"></div>
+
+  <div class="col-output">
+    <div class="col-head">
+      <h3 data-i18n="Output Layer">Output Layer</h3>
+      <div class="layer-tabs" id="layerTabs">
+        <div class="layer-tab active" data-layer="raw" data-i18n="raw" onclick="setLayer('raw')">raw</div>
+        <div class="layer-tab" data-layer="representation" data-i18n="representation" onclick="setLayer('representation')">representation</div>
+        <div class="layer-tab" data-layer="markdown" data-i18n="markdown" onclick="setLayer('markdown')">markdown</div>
+        <div class="layer-tab" data-layer="evaluation" data-i18n="evaluation" onclick="setLayer('evaluation')">evaluation</div>
+        <div class="layer-tab" data-layer="optimization" data-i18n="optimization" onclick="setLayer('optimization')">optimization</div>
+        <div class="layer-tab" data-layer="debug" data-i18n="debug" onclick="setLayer('debug')">debug</div>
+      </div>
+    </div>
+    <div class="col-body" id="outputBody"></div>
+  </div>
+</div>
+
+<section class="analysis-drawer" id="analysisDrawer" aria-label="运行分析">
+  <button class="analysis-toggle" id="analysisToggle" type="button" onclick="toggleAnalysisDrawer()" aria-expanded="false">
+    <span class="chevron" id="analysisChevron">›</span>
+    <span class="title" data-i18n="Run analysis">Run analysis</span>
+    <span class="hint">质量诊断、优化建议和统计图表</span>
+    <span class="state" id="analysisState">展开</span>
+  </button>
+  <div class="analysis-content" id="analysisContent">
+    <div class="analysis-resizer" id="analysisResizer" role="separator" aria-label="调整运行分析面板高度" title="拖动调整分析面板高度"></div>
+    <div class="bottom" id="primaryBottom">
+  <div class="bpanel" style="flex:0 0 260px;">
+    <div class="bpanel-head"><span>Corpus Tiers</span><span id="corpusHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body">
+      <div class="chart-wrap" style="height:160px;"><canvas id="corpusPie"></canvas></div>
+      <div id="corpusLegend" style="margin-top:4px;"></div>
+    </div>
+  </div>
+  <div class="bpanel" style="flex:0 0 440px;">
+    <div class="bpanel-head"><span>Quality · Scores</span><span id="dualHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body" id="dualBody">
+      <div class="chart-wrap" style="height:200px;"><canvas id="radar"></canvas></div>
+      <div id="dualBars" style="margin-top:6px;"></div>
+    </div>
+  </div>
+  <div class="bpanel" style="flex:0 0 380px;">
+    <div class="bpanel-head"><span>Quality · Issues</span><span id="issuesHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body" id="issuesBody"></div>
+  </div>
+  <div class="bpanel" id="warningTieringPanel" style="display:none;flex:0 0 380px;">
+    <div class="bpanel-head"><span data-i18n="Warning Tiering">Warning Tiering</span><span id="tieringHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body" id="tieringBody" style="font-size:10px;line-height:1.6;"></div>
+  </div>
+  <div class="bpanel">
+    <div class="bpanel-head"><span>Optimization</span><span id="optHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body" id="optBody"></div>
+  </div>
+  <div class="bpanel" id="annoPanel" style="display:none;">
+    <div class="bpanel-head"><span>Boundary Annotations</span><span id="annoHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body" id="annoBody"></div>
+  </div>
+  <div class="bpanel" id="archivePanel" style="display:none;flex:0 0 340px;">
+    <div class="bpanel-head"><span data-i18n="Archive Expansion">Archive Expansion</span><span id="archiveHint" style="font-weight:400;text-transform:none;"></span></div>
+    <div class="bpanel-body" id="archiveBody"></div>
+  </div>
+</div>
+
+<!-- Run-level statistics are secondary to the file-reading workflow. -->
+<div class="bottom" id="qualityAnalysisPanel" style="display:none;">
+  <div class="bpanel" style="flex:0 0 320px;">
+    <div class="bpanel-head"><span>Quality Score Distribution</span></div>
+    <div class="bpanel-body">
+      <div class="chart-wrap" style="height:180px;"><canvas id="qualityDistChart"></canvas></div>
+    </div>
+  </div>
+  <div class="bpanel" style="flex:0 0 320px;">
+    <div class="bpanel-head"><span>Dimension Correlation</span></div>
+    <div class="bpanel-body">
+      <div class="chart-wrap" style="height:180px;"><canvas id="dimCorrChart"></canvas></div>
+    </div>
+  </div>
+  <div class="bpanel" style="flex:0 0 320px;">
+    <div class="bpanel-head"><span>Human Correlation</span></div>
+    <div class="bpanel-body">
+      <div class="chart-wrap" style="height:180px;"><canvas id="humanCorrChart"></canvas></div>
+    </div>
+  </div>
+  <div class="bpanel">
+    <div class="bpanel-head"><span>Analysis Summary</span></div>
+    <div class="bpanel-body" id="qualitySummaryBody" style="font-size:10px;color:var(--text-dim);line-height:1.6;"></div>
+  </div>
+</div>
+  </div>
+</section>
+
+<script>
+const RUN_DATA = __RUN_DATA__;
+
+// ===================== Language =====================
+let UI_LANG = 'en';
+try { UI_LANG = localStorage.getItem('provendoc_report_lang') || localStorage.getItem('omni_report_lang') || 'en'; } catch (e) {}
+const UI_TEXT = {
+  en: { 'Representation Observability':'Representation Observability', 'Files':'Files', 'Source Document':'Source Document', 'Output Layer':'Output Layer', 'Run analysis':'Run analysis', 'Reset layout':'Reset layout', 'Export':'Export', 'Expand':'Expand', 'Collapse':'Collapse', 'raw':'raw', 'representation':'representation', 'markdown':'markdown', 'evaluation':'evaluation', 'optimization':'optimization', 'debug':'debug', 'No file selected':'No file selected', 'Parsed Content':'Parsed Content', 'Document Quality Report (DQR)':'Document Quality Report (DQR)', 'Input quality':'Input quality', 'Detected issues':'Detected issues', 'No DQR issues detected':'No DQR issues detected', 'Cleaning Snapshot':'Cleaning Snapshot', 'Cleaned Document':'Cleaned Document', 'Representation Views':'Representation Views', 'Quality Findings':'Quality Findings', 'Diagnostic Context':'Diagnostic Context', 'Optimization Overview':'Optimization Overview', 'Debug Overview':'Debug Overview', 'Pipeline Timing':'Pipeline Timing', 'Effective Configuration':'Effective Configuration', 'Alerts':'Alerts', 'Recommended Policy':'Recommended Policy', 'Best Result by Category':'Best Result by Category', 'Not applicable':'Not applicable', 'Confidence factors':'Confidence factors', 'Interpretation':'Interpretation', 'Limit':'Limit', 'Overall diagnostic':'Overall diagnostic', 'No quality issues detected for this doc':'No quality issues detected for this doc', 'Open complete evaluation JSON':'Open complete evaluation JSON', 'Open complete raw JSON':'open complete raw JSON', 'Open representation JSON':'open representation JSON', 'Open per-file debug JSON':'open per-file debug JSON', 'Archive Expansion':'Archive Expansion' },
+  zh: { 'Representation Observability':'表征可观测性', 'Files':'文件', 'Source Document':'源文档', 'Output Layer':'输出层', 'Run analysis':'运行分析', 'Reset layout':'重置布局', 'Export':'导出', 'Expand':'展开', 'Collapse':'收起', 'raw':'原始内容', 'representation':'表征', 'markdown':'Markdown', 'evaluation':'评估', 'optimization':'优化', 'debug':'调试', 'No file selected':'未选择文件', 'Parsed Content':'解析后内容', 'Document Quality Report (DQR)':'文档质量报告（DQR）', 'Input quality':'输入质量', 'Detected issues':'发现问题', 'No DQR issues detected':'未发现 DQR 问题', 'Cleaning Snapshot':'清理摘要', 'Cleaned Document':'清理后文档', 'Representation Views':'表征视图', 'Quality Findings':'质量诊断发现', 'Diagnostic Context':'诊断上下文', 'Optimization Overview':'优化概览', 'Debug Overview':'调试概览', 'Pipeline Timing':'管线耗时', 'Effective Configuration':'实际生效配置', 'Alerts':'告警', 'Recommended Policy':'推荐策略', 'Best Result by Category':'各类别最佳结果', 'Not applicable':'不适用', 'Confidence factors':'置信度因素', 'Interpretation':'指标说明', 'Limit':'使用限制', 'Overall diagnostic':'整体诊断', 'No quality issues detected for this doc':'此文档未发现质量问题', 'Open complete evaluation JSON':'打开完整 evaluation JSON', 'Open complete raw JSON':'打开完整 raw JSON', 'Open representation JSON':'打开表征 JSON', 'Open per-file debug JSON':'打开单文件 debug JSON', 'Archive Expansion':'压缩包展开', 'Warning Tiering':'警告分级' }
+};
+function tr(key) {
+  return (UI_TEXT[UI_LANG] && UI_TEXT[UI_LANG][key]) || UI_TEXT.en[key] || key;
+}
+function translateStaticText() {
+  const map = UI_TEXT[UI_LANG] || UI_TEXT.en;
+  document.querySelectorAll('[data-i18n]').forEach(el => { const key = el.dataset.i18n; if (map[key] != null) el.textContent = map[key]; });
+  document.documentElement.lang = UI_LANG === 'en' ? 'en' : 'zh-CN';
+}
+function toggleLanguage() {
+  UI_LANG = UI_LANG === 'en' ? 'zh' : 'en';
+  try { localStorage.setItem('provendoc_report_lang', UI_LANG); } catch (e) {}
+  translateStaticText();
+  const toggle = document.getElementById('langToggle');
+  if (toggle) toggle.textContent = UI_LANG === 'en' ? '中文' : 'EN';
+  renderOutput();
+  renderFileList();
+  renderArchivePanel();
+}
+
+// ===================== State =====================
+const FILES = RUN_DATA.files;
+const BASE_POLICY = {
+  // 新字段名优先；旧 run（token 命名时代）的 config.json 仍可打开
+  soft: RUN_DATA.config.packaging_size_soft_limit ?? RUN_DATA.config.packaging_token_soft_limit,
+  hard: RUN_DATA.config.packaging_size_hard_limit ?? RUN_DATA.config.packaging_token_hard_limit,
+  ctx:  RUN_DATA.config.context_propagation_mode,
+  boundary: RUN_DATA.config.boundary_preference || 'discourse_unit',
+  integrity: RUN_DATA.config.integrity_mode || 'all',
+  density: RUN_DATA.config.discourse_unit_target || 5,
+};
+let currentIdx = 0;
+// 默认层 = 管线第一环（raw → representation → markdown → evaluation → optimization → debug）
+let currentLayer = 'raw';
+let visibleFiles = FILES.map((_, i) => i);
+let radarChart = null;
+let corpusPieChart = null;
+let activeDomain = 'all';
+let sortMode = 'default';
+let activeDrillDim = null;
+let annoMode = false;
+let boundaryAnnos = loadBoundaryAnnos();
+const ANNO_KEY = 'provendoc_boundary_annos_' + RUN_DATA.run_id;
+
+// ===================== Precompute: per-dimension outliers =====================
+// 计算每个文件在每个维度上相对于语料的 z-score
+const DIM_STATS = {};  // {dim: {mean, std, p5, p95}}
+const dimKeys = Object.keys(RUN_DATA.dimension_labels || {});
+for (const dim of dimKeys) {
+  const vals = FILES.map(f => (f.quality_dimensions || {})[dim]).filter(v => v != null);
+  if (!vals.length) continue;
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length;
+  const std = Math.sqrt(variance) || 0.001;
+  const sorted = [...vals].sort((a, b) => a - b);
+  DIM_STATS[dim] = {
+    mean, std,
+    p5: sorted[Math.floor(sorted.length * 0.05)],
+    p95: sorted[Math.floor(sorted.length * 0.95)],
+  };
+}
+
+// ===================== 严重度色谱 =====================
+// 按 score 距 threshold 的距离映射色档：颜色本身即诊断结论
+// critical(很糟糕): 低于阈值 0.15+ | poor(有点糟糕): 低于阈值
+// fair(马马虎虎): 过线但 < 阈值+0.15 | ok: 健康
+const SEV = {
+  critical: '#ff5c5c',
+  poor: '#ff8c00',
+  fair: '#ffd24a',
+  ok: '#3ddc84',
+  unknown: '#9aa0ac'
+};
+function sevLevel(score, thr) {
+  if (score == null || thr == null) return 'unknown';
+  if (score < thr - 0.15) return 'critical';
+  if (score < thr) return 'poor';
+  if (score < Math.min(thr + 0.15, 1.0)) return 'fair';
+  return 'ok';
+}
+function sevColor(score, thr) { return SEV[sevLevel(score, thr)]; }
+function dimThreshold(dim) { return (RUN_DATA.dimension_thresholds || {})[dim]; }
+// 文件某维度的严重度（分数缺失时降级为 unknown）
+function dimSeverity(f, dim) {
+  if (!f || !f.quality_dimensions) return 'unknown';
+  return sevLevel(f.quality_dimensions[dim], dimThreshold(dim));
+}
+
+// 维度 → failure mode 证据映射（裁决层 drill down 回证据层）
+// 四维口径（invariant_v1；csc 已退回候选位不设条目）
+// → FailureMode（12 modes；section_context_loss 归 issue 面板回退展示）
+const DIM_FAILURE_MAP = {
+  structural_preservation: ['code_explanation_split', 'explanation_code_split', 'procedure_step_split', 'list_item_split', 'table_description_split'],
+  semantic_continuity: ['discourse_split', 'semantic_drift', 'definition_example_split'],
+  granularity_appropriateness: [],
+  boundary_cleanliness: ['heading_ambiguity', 'cross_reference_break', 'hierarchy_ambiguity']
+};
+// issue 证据展开状态
+const expandedIssueDims = new Set();
+
+function fileZScore(file, dim) {
+  const v = (file.quality_dimensions || {})[dim];
+  const s = DIM_STATS[dim];
+  if (v == null || !s) return 0;
+  return (v - s.mean) / s.std;
+}
+
+function isOutlier(file) {
+  for (const dim of dimKeys) {
+    if (fileZScore(file, dim) < -1.5) return true;
+  }
+  return false;
+}
+
+function confLevel(file) {
+  // 证据强度：基于 chunk_count、density_adapted、sampling
+  if (!file.quality_overall) return null;
+  if (file.density_adapted) return 'low';
+  if (file.chunk_count < 2) return 'low';
+  if (file.quality_confidence != null && file.quality_confidence < 0.3) return 'low';
+  if (file.quality_confidence != null && file.quality_confidence < 0.55) return 'med';
+  return 'high';
+}
+
+function confDot(file) {
+  const lv = confLevel(file);
+  if (!lv) return '';
+  return '<span class="conf-dot ' + lv + '" title="confidence: ' + lv + '"></span>';
+}
+
+// ===================== Failure mode humanization =====================
+const FAILURE_NARRATIVES = {
+  heading_lost: { title: 'Heading context lost', impact: '检索时此 chunk 缺少章节标题，嵌入向量会偏离主题上下文' },
+  context_loss: { title: 'Context propagation gap', impact: '上下文在 chunk 边界断裂，模型无法追溯前文结构' },
+  truncated_heading: { title: 'Truncated heading', impact: '标题被截断，section 边界信息不完整' },
+  oversized_chunk: { title: 'Oversized chunk', impact: 'chunk 超过 hard limit，可能被下游截断或丢失尾部内容' },
+  undersized_chunk: { title: 'Undersized chunk', impact: 'chunk 过小，语义密度不足，检索时信噪比低' },
+  structural_break: { title: 'Structure broken', impact: '文档结构（表格/列表/代码块）在边界处被拆散' },
+  heading_orphan: { title: 'Orphaned heading', impact: '标题与内容分离，heading 被切到上一个 chunk 末尾' },
+  semantic_gap: { title: 'Semantic gap', impact: '相邻 chunk 之间语义跳跃过大，连续阅读时信息断裂' },
+};
+
+function humanizeFailure(mode) {
+  const key = mode.replace(/\s+/g, '_').toLowerCase();
+  return FAILURE_NARRATIVES[key] || { title: mode, impact: 'representation 在此处可能丢失语义关联' };
+}
+
+// ===================== Init =====================
+function init() {
+  document.getElementById('runId').textContent = RUN_DATA.run_id;
+  document.getElementById('sFiles').textContent =
+    RUN_DATA.stats.success_files + '/' + RUN_DATA.stats.total_files;
+  document.getElementById('sRate').textContent =
+    RUN_DATA.stats.success_rate.toFixed(1) + '%';
+  document.getElementById('sQuality').textContent =
+    (RUN_DATA.stats.avg_quality_overall || 0).toFixed(3);
+
+  // Count outliers
+  const outlierCount = FILES.filter(isOutlier).length;
+  document.getElementById('sOutliers').textContent = outlierCount;
+
+  renderDomainFilters();
+  renderFileList();
+  renderCorpusPie();
+  renderQualityScores(FILES[0]);
+  renderQualityAnalysis();
+  renderArchivePanel();
+  renderWarningTiering();
+  if (FILES.length) selectFile(0);
+  updateAnnoCount();
+  applyLayout();
+  translateStaticText();
+  const langBtn = document.getElementById('langToggle');
+  if (langBtn) langBtn.textContent = UI_LANG === 'en' ? '中文' : 'EN';
+  initResizers();
+}
+
+// ===================== Compact file controls =====================
+function renderDomainFilters() {
+  const domains = new Map([['all', FILES.length]]);
+  FILES.forEach(f => {
+    const domain = f.domain || 'unknown';
+    domains.set(domain, (domains.get(domain) || 0) + 1);
+  });
+  const select = document.getElementById('fileDomain');
+  select.innerHTML = [...domains.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([domain, count]) =>
+    `<option value="${esc(domain)}" ${activeDomain === domain ? 'selected' : ''}>${domain === 'all' ? '全部领域' : esc(domain)} (${count})</option>`
+  ).join('');
+}
+
+function setDomainFilter(domain) { activeDomain = domain; renderFileList(); }
+function setSort(mode) { sortMode = mode; document.getElementById('fileSort').value = mode; renderFileList(); }
+
+// ===================== File list =====================
+function renderFileList() {
+  const q = document.getElementById('fileSearch').value.toLowerCase();
+  let idxs = FILES
+    .map((f, i) => i)
+    .filter(i => FILES[i].relative_path.toLowerCase().includes(q))
+    .filter(i => activeDomain === 'all' || (FILES[i].domain || 'unknown') === activeDomain);
+
+  // Sort
+  if (sortMode === 'quality_asc') {
+    idxs.sort((a, b) => (FILES[a].quality_overall ?? 99) - (FILES[b].quality_overall ?? 99));
+  } else if (sortMode === 'outlier') {
+    idxs.sort((a, b) => {
+      const za = Math.min(...dimKeys.map(d => fileZScore(FILES[a], d)));
+      const zb = Math.min(...dimKeys.map(d => fileZScore(FILES[b], d)));
+      return za - zb;
+    });
+  }
+
+  visibleFiles = idxs;
+  const list = document.getElementById('fileList');
+  document.getElementById('fileCount').textContent = visibleFiles.length + '/' + FILES.length;
+
+  if (!visibleFiles.length) { list.innerHTML = '<div class="empty">无匹配文件</div>'; return; }
+
+  // Keep category grouping only when browsing the unfiltered corpus.
+  // Search/filter results are a flat list, avoiding repeated group headers and tags.
+  const groups = new Map();
+  if (!q && activeDomain === 'all' && sortMode === 'default') {
+    visibleFiles.forEach(i => {
+      const category = FILES[i].category || 'root';
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(i);
+    });
+  } else {
+    groups.set('', visibleFiles);
+  }
+
+  let html = '';
+  for (const [category, categoryIndexes] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (category) html += `<div class="group-header"><span>${esc(category)}</span><span class="gcount">${categoryIndexes.length}</span></div>`;
+    html += categoryIndexes.map(i => {
+      const f = FILES[i];
+      const sm = f.sampling_meta;
+      const sampledTag = sm && sm.sampled ? `<span class="ftag sampled" title="输出已采样：${sm.sample_size}/${sm.total} units">⚡${sm.sample_size}/${sm.total}</span>` : '';
+      const densityTag = f.density_adapted ? '<span class="ftag density" title="质量/failure 评估已密度降级">▽density</span>' : '';
+      const outlierTag = isOutlier(f) ? '<span class="ftag outlier" title="包含异常低分维度">⚠outlier</span>' : '';
+      const annoStats = annoMode ? annoStatsForFile(f.file_path) : null;
+      const annoTag = annoStats && annoStats.total ? `<span class="ftag" style="color:var(--accent);border-color:var(--accent);" title="边界标注: ${annoStats.ok} ok / ${annoStats.merge} merge / ${annoStats.split} split">⚑${annoStats.total}</span>` : (annoMode ? '<span class="ftag" style="color:var(--text-dim);border-color:var(--border);" title="未标注">⚑0</span>' : '');
+      const tierColors = { normal_narrative: 'var(--accent)', robustness: 'var(--warn)', stress: 'var(--bad)', minimal: 'var(--text-dim)' };
+      const tierLabels = { normal_narrative: 'N', robustness: 'R', stress: 'S', minimal: 'M' };
+      const tier = f.corpus_tier || 'normal_narrative';
+      const tierTag = tier !== 'normal_narrative' ? `<span class="ftag" style="color:${tierColors[tier] || 'var(--text-dim)'};border-color:${tierColors[tier] || 'var(--text-dim)'};" title="${esc(tier)}">${tierLabels[tier] || '?'}</span>` : '';
+      const qualityStr = f.quality_overall != null ? f.quality_overall.toFixed(2) : '—';
+      return `<div class="file-item ${i === currentIdx ? 'active' : ''}" onclick="selectFile(${i})" data-idx="${i}">
+        <div class="fn" title="${esc(f.relative_path)}">${esc(f.relative_path)}</div>
+        <div class="fm">
+          <span class="dot ${f.success ? 'ok' : 'err'}"></span>
+          <span>${f.chunk_count}u</span>
+          <span>质量 ${qualityStr}${confDot(f)}</span>
+          ${tierTag}${sampledTag}${densityTag}${outlierTag}${annoTag || ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+  list.innerHTML = html;
+}
+
+function selectFile(idx) {
+  currentIdx = idx;
+  renderFileList();
+  if (coherenceChart) { coherenceChart.destroy(); coherenceChart = null; }
+  const f = FILES[idx];
+const doc = document.getElementById('docText');
+// Source Document 契约：优先展示文件源文本（解码后原文，编辑器视图，
+// 保留空行与零宽字符），不可见字符渲染为可见标记；不可得时回退解析快照。
+const srcText = (f.source_text != null && f.source_text !== '') ? f.source_text : (f.raw_text || '');
+doc.innerHTML = srcText ? renderDocText(srcText) : '(空文档)';
+renderSourcePreviewNotice(f);
+renderInvisibleLegend(srcText, Boolean(f.source_truncated));
+doc.parentElement.scrollTop = 0;
+  const pos = visibleFiles.indexOf(idx);
+  document.getElementById('navPos').textContent = (pos + 1) + ' / ' + visibleFiles.length;
+  document.getElementById('prevBtn').disabled = pos <= 0;
+  document.getElementById('nextBtn').disabled = pos >= visibleFiles.length - 1;
+  activeDrillDim = null;
+  renderOutput();
+  renderBottom();
+}
+
+function navFile(delta) {
+  const pos = visibleFiles.indexOf(currentIdx);
+  const next = pos + delta;
+  if (next >= 0 && next < visibleFiles.length) selectFile(visibleFiles[next]);
+}
+
+// ===================== Output layer =====================
+function setLayer(layer) {
+  if (currentLayer === 'evaluation' && layer !== 'evaluation') {
+    if (coherenceChart) { coherenceChart.destroy(); coherenceChart = null; }
+  }
+  currentLayer = layer;
+  document.querySelectorAll('.layer-tab').forEach(t => t.classList.toggle('active', t.dataset.layer === layer));
+  renderOutput();
+}
+
+function renderOutput() {
+  const f = FILES[currentIdx];
+  const body = document.getElementById('outputBody');
+  if (!f) { body.innerHTML = '<div class="empty">' + esc(tr('No file selected')) + '</div>'; return; }
+  const p = BASE_POLICY;
+
+  if (currentLayer === 'markdown') {
+    // [L2 呈现层] base 粒度 units 的纯 Markdown 渲染（非事实源，
+    // 结构化事实在 representation/{base}_repr.json）
+    const md = f.markdown || '';
+    if (!md) { body.innerHTML = '<div class="empty">No markdown output for this file.<br>(export disabled or huge-file skip)</div>'; return; }
+    let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:10px;color:var(--text-dim);">${f.chunk_count} units · ${f.raw_char_count || 0} chars${f.markdown_truncated ? ' · <span style="color:var(--warn);">truncated</span>' : ''}</span>
+      <span style="font-size:10px;color:var(--text-dim);font-family:ui-monospace,monospace;">📄 ${esc(f.paths.markdown || 'markdown/')}</span>
+    </div>`;
+    html += `<div class="md-view">${marked.parse(md)}</div>`;
+    body.innerHTML = html;
+  } else if (currentLayer === 'representation') {
+    // [L3 表征层] cleaning 后全文 + 三粒度 views（契约 schema）
+    // 数据在生成期内嵌于 RUN_DATA（file:// 协议下浏览器禁止 fetch 同目录 JSON）
+    const repr = f.representation;
+    const reprPath = (f.paths && f.paths.representation) ? f.paths.representation : null;
+    if (!repr) { body.innerHTML = '<div class="empty">No representation data embedded for this file.<br>(export disabled, huge-file skip, or artifact missing)</div>'; return; }
+    const sel = repr.selected_granularity || 'base';
+    const granularityInfo = {
+      coarse: { label: 'COARSE', purpose: 'section-scale context · broad retrieval', color: '#7b8cff' },
+      base: { label: 'BASE', purpose: 'default working units · quality observation', color: '#38c991' },
+      fine: { label: 'FINE', purpose: 'sentence-level groups · precise retrieval', color: '#f0b45b' },
+    };
+    const gs = ['coarse', 'base', 'fine'].map(g => {
+      const gv = (repr.granularities || {})[g] || { status: 'not_generated', units: [], unit_count: 0 };
+      return { g, gv, info: granularityInfo[g] };
+    });
+    const totalUnits = gs.reduce((a, { gv }) => a + (gv.unit_count || 0), 0);
+    const cleaning = repr.cleaning || {};
+    const cleaningStats = cleaning.cleaning_stats || {};
+    const cleaningTrace = cleaning.cleaning_trace || [];
+    const cleanMetrics = Object.entries(cleaningStats).filter(([, value]) => typeof value === 'number').slice(0, 4);
+    let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:10px;color:var(--text-dim);">${totalUnits} ${UI_LANG === 'zh' ? '个表征单元 · 默认' : 'representation units · default'} <b>${esc(sel)}</b></span>${artifactLink(reprPath, tr('Open representation JSON'))}</div>`;
+    html += sectionHead(tr('Cleaning Snapshot'), cleaning.applied ? (UI_LANG === 'zh' ? '表征生成前已应用清理规则' : 'changes applied before representation') : (UI_LANG === 'zh' ? '保留原内容，未发生清理变更' : 'source retained without cleaning changes'));
+    html += `<div class="viz-grid"><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '清理后文本' : 'Cleaned text'}</div><div class="value">${repr.cleaned_char_count || 0}</div><div style="font-size:9px;color:var(--text-dim);">${UI_LANG === 'zh' ? '字符' : 'characters'}${repr.cleaned_truncated ? (UI_LANG === 'zh' ? ' · 预览已截断' : ' · preview capped') : ''}</div></div><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '清理状态' : 'Cleaning'}</div><div class="value" style="color:${cleaning.applied ? 'var(--good)' : 'var(--text-dim)'};">${cleaning.applied ? (UI_LANG === 'zh' ? '已应用' : 'Applied') : (UI_LANG === 'zh' ? '未变更' : 'Unchanged')}</div><div style="font-size:9px;color:var(--text-dim);">${cleaningTrace.length} ${UI_LANG === 'zh' ? '条已记录决策' : 'recorded decision(s)'}</div></div><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '默认视图' : 'Default view'}</div><div class="value" style="color:var(--accent);text-transform:uppercase;">${esc(sel)}</div><div style="font-size:9px;color:var(--text-dim);">${UI_LANG === 'zh' ? '消费粒度' : 'consumer granularity'}</div></div></div>`;
+    if (cleanMetrics.length) html += `<div class="chip-row">${cleanMetrics.map(([name, value]) => `<span class="chip">${esc(name.replaceAll('_', ' '))}: <b>${esc(String(value))}</b></span>`).join('')}</div>`;
+    if (cleaningTrace.length) html += `<div class="inline-meta">${cleaningTrace.slice(0, 3).map(step => `<span>✓ ${esc(typeof step === 'string' ? step : (step.action || step.name || 'cleaning rule'))}</span>`).join('')}${cleaningTrace.length > 3 ? `<span>+${cleaningTrace.length - 3} more in artifact</span>` : ''}</div>`;
+    html += sectionHead(tr('Cleaned Document'), UI_LANG === 'zh' ? '所有表征视图的构建预览' : 'preview used to construct every representation view');
+    html += `<pre class="doc-text" style="margin:0 0 8px;padding:10px;max-height:260px;overflow:auto;border:1px solid var(--border);border-left:3px solid var(--good);border-radius:4px;background:var(--panel-2);white-space:pre-wrap;">${esc(repr.cleaned_text || '(empty cleaned document)')}</pre>`;
+    html += sectionHead(tr('Representation Views'), UI_LANG === 'zh' ? '同一清理后文档的粗、中、细三种粒度' : 'same cleaned document at coarse, base, and fine granularities');
+    for (const { g, gv, info } of gs) {
+      const isSelected = g === sel;
+      const isEmpty = gv.status === 'empty' || (gv.status === 'available' && !gv.unit_count);
+      const statusText = isEmpty ? 'no units produced' : gv.status === 'available' ? 'available' : 'not generated';
+      const statusColor = gv.status === 'available' ? 'var(--good)' : isEmpty ? 'var(--warn)' : 'var(--text-dim)';
+      const reasonText = isEmpty
+        ? 'Fine splitting is enabled, but this input has no eligible sentence boundary.'
+        : (gv.reason ? `Reason: ${gv.reason}` : '');
+      const overlapCount = (gv.units || []).filter(u => {
+        const m = u.metadata || {};
+        return m.has_overlap_before || m.has_overlap_after;
+      }).length;
+      const overlapText = overlapCount ? ` · ${overlapCount} unit(s) carry intentional context overlap` : '';
+      const truncHtml = gv.truncated
+        ? ` · showing first ${gv.shown_count} of ${gv.unit_count}`
+        : '';
+      html += `<section style="margin:12px 0;padding:10px;border:1px solid ${info.color};border-left:5px solid ${info.color};border-radius:6px;background:color-mix(in srgb, ${info.color} 7%, var(--panel));">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
+          <div><span style="font-size:12px;font-weight:700;color:${info.color};letter-spacing:.08em;">${info.label}</span>${isSelected ? ' <span style="font-size:10px;color:var(--accent);">DEFAULT</span>' : ''}<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">${info.purpose}</div></div>
+          <div style="font-size:10px;color:${statusColor};white-space:nowrap;">${gv.unit_count || 0} units · ${gv.character_count || 0} chars · ${statusText}</div>
+        </div>
+        ${reasonText ? `<div style="font-size:10px;color:${statusColor};margin-top:7px;">${esc(reasonText)}</div>` : ''}
+        ${overlapText || truncHtml ? `<div style="font-size:10px;color:var(--text-dim);margin-top:5px;">${esc(overlapText + truncHtml)}</div>` : ''}
+        ${!isEmpty && gv.status === 'available' ? `<div style="margin-top:8px;">${(gv.units || []).map((u, i) => unitCardFromObj(i, u, p)).join('')}</div>` : ''}
+      </section>`;
+    }
+    body.innerHTML = html;
+  } else if (currentLayer === 'evaluation') {
+    // [L4 质量诊断层] 先给出问题、证据和行动，再提供评分语境与完整正式产物。
+    if (!f.quality_dimensions || !Object.keys(f.quality_dimensions).length) { body.innerHTML = '<div class="empty">此文件无质量评估</div>'; return; }
+    let html = sectionHead(tr('Quality Findings'), UI_LANG === 'zh' ? '问题 → 证据 → 建议动作；分数只用于诊断，不是质量裁决' : 'issues → evidence → suggested action; scores are diagnostic signals, not a quality verdict');
+    html += '<div style="margin:8px 0 12px;">' + renderIssuesBlock(f) + '</div>';
+    html += renderQualityContext(f);
+    html += renderRseGateBlock(f);
+    html += renderCoherenceSection(f);
+    html += `<div style="margin-top:10px;font-size:10px;color:var(--text-dim);">${UI_LANG === 'zh' ? '完整 evaluation 产物仍可作为追溯源文件打开；当前仅保留可行动的诊断摘要。' : 'The full evaluation artifact remains available as a source file; this view keeps only the actionable diagnostic summary.'}</div>`;
+    html += `<div style="margin-top:7px;">${artifactLink(f.paths.evaluation, tr('Open complete evaluation JSON'))}</div>`;
+    body.innerHTML = html;
+    requestAnimationFrame(() => mountCoherenceChart(f));
+  } else if (currentLayer === 'optimization') {
+    // [L6 优化层] 当前文件策略优化视图（run 级全局摘要作辅助上下文）
+    const optSummary = RUN_DATA.stats.optimization_summary || {};
+    if (!Object.keys(optSummary).length) { body.innerHTML = '<div class="empty">No optimization summary for this run.<br>(run_optimization=False or the optimizer failed)</div>'; return; }
+    let html = '';
+    if (optSummary.error) {
+      html = `<div class="diag bad"><div class="dt">Optimization did not complete</div><div class="dd">${esc(optSummary.error)}</div></div>`;
+    } else {
+      const perCat = optSummary.per_category || {};
+      const rel = f.relative_path || '';
+      let fileEntry = null;
+      for (const entries of Object.values(perCat)) {
+        if (!Array.isArray(entries)) continue;
+        fileEntry = entries.find(e => e.file === rel) || fileEntry;
+      }
+      const cat = (rel.split('/')[0] || 'root');
+      const catEntries = perCat[cat] || [];
+      const catBest = catEntries.length ? catEntries.reduce((winner, item) => item.best_score != null && (winner.best_score == null || item.best_score > winner.best_score) ? item : winner, catEntries[0]) : null;
+      html += sectionHead(UI_LANG === 'zh' ? '本文件优化结果' : 'Optimization for this file', UI_LANG === 'zh' ? '基于策略搜索对当前文件给出的建议' : 'strategy search suggestions for the current file');
+      if (fileEntry) {
+        const bs = fileEntry.best_strategy || {};
+        const imp = fileEntry.best_score != null && fileEntry.baseline_score != null ? fileEntry.best_score - fileEntry.baseline_score : null;
+        const deltaColor = imp == null ? 'var(--text-dim)' : imp >= 0 ? 'var(--good)' : 'var(--bad)';
+        html += `<div class="viz-grid"><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '最佳分数' : 'Best score'}</div><div class="value" style="color:${deltaColor};">${fileEntry.best_score != null ? Number(fileEntry.best_score).toFixed(3) : '—'}</div></div><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '基线' : 'Baseline'}</div><div class="value">${fileEntry.baseline_score != null ? Number(fileEntry.baseline_score).toFixed(3) : '—'}</div></div><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '提升' : 'Improvement'}</div><div class="value" style="color:${deltaColor};">${imp == null ? '—' : `${imp >= 0 ? '+' : ''}${imp.toFixed(3)}`}</div></div></div>`;
+        html += `<div class="chip-row"><span class="chip">${UI_LANG === 'zh' ? '边界' : 'Boundary'}: <b>${esc(bs.boundary || '—')}</b></span><span class="chip">${UI_LANG === 'zh' ? '规模' : 'Scale'}: <b>${esc(bs.scale || '—')}</b></span><span class="chip">soft: <b>${esc(String(bs.soft_limit ?? '—'))}</b></span><span class="chip">hard: <b>${esc(String(bs.hard_limit ?? '—'))}</b></span><span class="chip">${UI_LANG === 'zh' ? '测试' : 'Tested'}: <b>${esc(String(fileEntry.total_tested ?? '—'))}</b></span></div>`;
+        if (fileEntry.sanity_flags && fileEntry.sanity_flags.length) html += `<div class="diag warn" style="margin-top:6px;"><div class="dt">${UI_LANG === 'zh' ? '注意' : 'Sanity flags'}: ${esc(fileEntry.sanity_flags.join(' · '))}</div></div>`;
+      } else {
+        html += `<div class="empty">${UI_LANG === 'zh' ? '此文件未被采样优化。' : 'This file was not included in the optimization sample.'}</div>`;
+        if (catBest) {
+          const bs = catBest.best_strategy || {};
+          html += `<div style="margin-top:8px;font-size:10px;color:var(--text-dim);">${UI_LANG === 'zh' ? '同类别最佳策略参考' : 'Best strategy for same category'}: <span style="color:var(--accent);">${esc([bs.boundary, bs.scale].filter(Boolean).join(' · ') || '—')}</span> · soft ${esc(String(bs.soft_limit ?? '—'))} · hard ${esc(String(bs.hard_limit ?? '—'))}</div>`;
+        }
+      }
+      const gr = optSummary.global_recommendation || {};
+      const votes = Object.entries(gr.boundary_votes || {}).map(([mode, count]) => `${mode} × ${count}`).join(' · ');
+      html += sectionHead(UI_LANG === 'zh' ? '全局推荐' : 'Global recommendation', UI_LANG === 'zh' ? 'Run 级聚合建议（供跨文件对比）' : 'aggregated from sampled candidates across the run');
+      html += `<div style="padding:9px;border:1px solid rgba(74,158,255,.35);border-left:3px solid var(--accent);border-radius:5px;background:rgba(74,158,255,.06);font-size:11px;line-height:1.7;"><b style="color:var(--accent);">${esc(gr.boundary_mode || 'No boundary recommendation')}</b>${gr.scale_median ? ` · scale <b>${esc(String(gr.scale_median))}</b>` : ''}${votes ? `<div style="font-size:10px;color:var(--text-dim);">votes: ${esc(votes)}</div>` : ''}</div>`;
+      if (optSummary.errors && optSummary.errors.length) html += `<div class="diag warn" style="margin-top:9px;"><div class="dt">${optSummary.errors.length} file(s) could not be optimized</div></div>`;
+      if (optSummary.note) html += `<div style="font-size:10px;color:var(--text-dim);margin-top:8px;">${esc(optSummary.note)}</div>`;
+    }
+    html += artifactRef('optimization/optimization_summary.json', UI_LANG === 'zh' ? '策略搜索建议 · 另见 optimization/profile_summary.json、optimization/run_trace.json' : 'strategy search suggestions · see also optimization/profile_summary.json, optimization/run_trace.json');
+    body.innerHTML = html;
+  } else if (currentLayer === 'raw') {
+    // Raw is intentionally concise: parsed text and its input-quality report.
+    const meta = f.raw_meta || {};
+    if (!Object.keys(meta).length) { body.innerHTML = '<div class="empty">No raw artifact for this file.</div>'; return; }
+    const dq = meta.document_quality || null;
+    let html = sectionHead(tr('Parsed Content'), `${f.raw_char_count || 0} ${UI_LANG === 'zh' ? '字符' : 'chars'}${f.raw_truncated ? (UI_LANG === 'zh' ? ' · 预览已截断' : ' · preview truncated') : ''}`);
+    html += `<pre class="doc-text" style="margin:0 0 9px;padding:10px;max-height:300px;overflow:auto;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:4px;background:var(--panel-2);white-space:pre-wrap;">${renderDocText(f.raw_text || '(empty document)')}</pre>`;
+    if (dq) {
+      const profile = Object.entries(dq.profile || {}).filter(([, value]) => typeof value === 'number');
+      const overall = dq.overall != null ? Number(dq.overall) : null;
+      html += sectionHead(tr('Document Quality Report (DQR)'), UI_LANG === 'zh' ? '只评估输入质量，与质量评估独立' : 'input quality only · independent from quality evaluation');
+      html += `<div class="viz-grid"><div class="viz-card"><div class="label">${esc(tr('Input quality'))}</div><div class="value" style="color:${overall != null && overall >= .7 ? 'var(--good)' : 'var(--warn)'};">${overall != null ? overall.toFixed(2) : '—'}</div><div style="font-size:9px;color:var(--text-dim);">${UI_LANG === 'zh' ? '整体 DQR 信号' : 'overall DQR signal'}</div></div><div class="viz-card"><div class="label">${esc(tr('Detected issues'))}</div><div class="value" style="color:${(dq.issues || []).length ? 'var(--warn)' : 'var(--good)'};">${(dq.issues || []).length}</div><div style="font-size:9px;color:var(--text-dim);">${UI_LANG === 'zh' ? '需要回看源文档' : 'needs source attention'}</div></div></div>`;
+      html += profile.map(([name, value]) => { const pct = Math.max(0, Math.min(100, Number(value) * 100)); const color = pct >= 70 ? 'var(--good)' : pct >= 45 ? 'var(--warn)' : 'var(--bad)'; return `<div class="score-row"><span>${esc(name.replaceAll('_', ' '))}</span><div class="score-track"><div class="score-fill" style="width:${pct}%;background:${color};"></div></div><span style="text-align:right;color:${color};">${Number(value).toFixed(2)}</span></div>`; }).join('');
+      const dqIssues = dq.issues || [];
+      if (dqIssues.length) html += `<div style="margin-top:7px;">${dqIssues.slice(0, 3).map(issue => `<div class="diag warn"><div class="dt">${esc(typeof issue === 'string' ? issue : (issue.type || issue.message || 'DQR issue'))}</div>${typeof issue === 'object' && issue.detail ? `<div class="dd">${esc(issue.detail)}</div>` : ''}</div>`).join('')}</div>`;
+      else html += '<div class="diag ok"><div class="dt">' + esc(tr('No DQR issues detected')) + '</div></div>';
+    } else html += '<div class="empty">No DQR payload was generated for this input.</div>';
+    html += `<div class="inline-meta"><span>parser: ${esc(meta.parser || '-')}</span><span>format: ${esc(meta.file_type || meta.mime_type || '-')}</span><span>encoding: ${esc(typeof meta.encoding === 'object' ? (meta.encoding.encoding_used || '-') : (meta.encoding || '-'))}</span></div>`;
+    html += `<div style="margin-top:9px;">${artifactLink(f.paths.raw, tr('Open complete raw JSON'))}</div>`;
+    body.innerHTML = html;
+  } else if (currentLayer === 'debug') {
+    if (!f.paths.debug) {
+      body.innerHTML = '<div class="empty">Debug capture was not enabled for this run.</div>';
+    } else if (!f.debug_payload) {
+      body.innerHTML = '<div class="empty">The debug artifact is available as a file but could not be summarized here.</div>' + artifactLink(f.paths.debug, 'open per-file debug JSON');
+    } else {
+      const debug = f.debug_payload;
+      const trace = debug.pipeline_trace || {};
+      const stages = trace.stages || {};
+      const config = debug.config || {};
+      const stageEntries = Object.entries(stages).filter(([, ms]) => typeof ms === 'number');
+      const maxStageMs = Math.max(1, ...stageEntries.map(([, ms]) => ms));
+      const warnings = [ ...(debug.warnings || []), ...(debug.errors || []) ];
+      let html = sectionHead(tr('Debug Overview'), UI_LANG === 'zh' ? '管线耗时、实际生效配置与诊断信息' : 'pipeline timing, effective configuration, and diagnostics');
+      html += `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-bottom:10px;"><div style="padding:8px;border:1px solid var(--border);border-radius:5px;background:var(--panel-2);"><div style="font-size:10px;color:var(--text-dim);">${UI_LANG === 'zh' ? '总耗时' : 'TOTAL TIME'}</div><div style="font-size:17px;font-weight:700;">${trace.total_ms != null ? Number(trace.total_ms).toFixed(1) + ' ms' : '—'}</div></div><div style="padding:8px;border:1px solid var(--border);border-radius:5px;background:var(--panel-2);"><div style="font-size:10px;color:var(--text-dim);">${UI_LANG === 'zh' ? '阶段数' : 'STAGES'}</div><div style="font-size:17px;font-weight:700;">${stageEntries.length}</div></div><div style="padding:8px;border:1px solid var(--border);border-radius:5px;background:var(--panel-2);"><div style="font-size:10px;color:var(--text-dim);">${UI_LANG === 'zh' ? '告警' : 'WARNINGS'}</div><div style="font-size:17px;font-weight:700;color:${warnings.length ? 'var(--warn)' : 'var(--good)'};">${warnings.length}</div></div></div>`;
+      html += sectionHead(tr('Pipeline Timing'), UI_LANG === 'zh' ? '按阶段相对耗时' : 'relative stage cost');
+      html += stageEntries.length ? stageEntries.map(([name, ms]) => `<div style="display:grid;grid-template-columns:100px 1fr 65px;gap:8px;align-items:center;margin:6px 0;font-size:10px;"><span>${esc(name)}</span><div style="height:7px;border-radius:4px;background:var(--panel-2);overflow:hidden;"><div style="height:100%;width:${Math.max(2, ms / maxStageMs * 100)}%;background:var(--accent);border-radius:4px;"></div></div><span style="text-align:right;font-family:ui-monospace,monospace;color:var(--text-dim);">${Number(ms).toFixed(2)} ms</span></div>`).join('') : '<div class="empty">No stage timing recorded.</div>';
+      const configBits = Object.entries(config).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).slice(0, 12);
+      if (configBits.length) html += sectionHead(tr('Effective Configuration'), UI_LANG === 'zh' ? '关键标量选项' : 'high-level scalar options') + `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px;font-size:10px;color:var(--text-dim);">${configBits.map(([name, value]) => `<div><span>${esc(name.replaceAll('_', ' '))}</span><b style="float:right;color:var(--text);">${esc(String(value))}</b></div>`).join('')}</div>`;
+      html += sectionHead(tr('Alerts'), UI_LANG === 'zh' ? '处理期间捕获的错误与告警' : 'errors and warnings captured during processing');
+      html += warnings.length ? warnings.slice(0, 8).map(warning => `<div class="diag warn"><div class="dt">${esc(typeof warning === 'string' ? warning : (warning.message || warning.type || JSON.stringify(warning)))}</div></div>`).join('') : '<div class="diag ok"><div class="dt">No debug alerts recorded</div></div>';
+      html += `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;">${artifactLink(f.paths.debug, tr('Open per-file debug JSON'))}${artifactLink('debug/run_trace.json', UI_LANG === 'zh' ? '打开运行级全局追踪' : 'open run-level global trace')}</div>`;
+      body.innerHTML = html;
+    }
+  }
+}
+
+// ===================== Coherence Curve（质量连贯度下钻）=====================
+let coherenceChart = null;
+
+function renderQualityContext(f) {
+  const evaluation = f.evaluation_payload || {};
+  const applicability = evaluation.applicability || {};
+  const notApplicable = Object.entries(applicability).filter(([, value]) => value && value.applicable === false);
+  const confidence = evaluation.confidence_profile || {};
+  const definitions = evaluation.metric_definitions || {};
+  const issueDefinitions = (f.quality_issues || []).map(issue => [issue.dimension, definitions[issue.dimension]]).filter(([, definition]) => definition);
+  // issue 维度 → 中文标签：四维口径，无则回退原始名
+  const dimLabel = (dimension) => ((RUN_DATA.dimension_labels || {})[dimension]) || dimension;
+  let html = sectionHead(tr('Diagnostic Context'), UI_LANG === 'zh' ? '适用性、置信度与问题指标的阅读边界' : 'applicability, confidence, and reading boundaries for flagged metrics');
+  html += `<div class="viz-grid"><div class="viz-card"><div class="label">${esc(tr('Overall diagnostic'))}</div><div class="value">${evaluation.overall != null ? Number(evaluation.overall).toFixed(3) : '—'}</div></div><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '置信度' : 'Confidence'}</div><div class="value" style="color:var(--accent);">${evaluation.confidence != null ? Number(evaluation.confidence).toFixed(2) : '—'}</div></div><div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '问题指标' : 'Flagged metrics'}</div><div class="value" style="color:${issueDefinitions.length ? 'var(--warn)' : 'var(--good)'};">${issueDefinitions.length}</div></div></div>`;
+  if (notApplicable.length) html += `<div class="chip-row"><span class="chip">${esc(tr('Not applicable'))}: ${notApplicable.map(([name, value]) => esc(name.replaceAll('_', ' ') + (value.reason ? ' · ' + value.reason : ''))).join(' · ')}</span></div>`;
+  if (Object.keys(confidence).length) html += `<div class="chip-row">${Object.entries(confidence).map(([name, value]) => `<span class="chip">${esc(name.replaceAll('_', ' '))}: <b>${Number(value).toFixed(2)}</b></span>`).join('')}</div>`;
+  if (issueDefinitions.length) {
+    html += `<div class="inline-meta" style="margin-top:7px;">${issueDefinitions.map(([dimension, definition]) => `<div style="flex:1 1 220px;border:1px solid var(--border);border-left:3px solid var(--warn);border-radius:4px;padding:7px;"><div style="font-size:10px;font-weight:600;color:var(--text);">${esc(dimLabel(dimension))}</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:3px;">${esc(definition.purpose || '')}</div>${definition.limitations ? `<div style="font-size:9px;color:var(--warn);line-height:1.45;margin-top:4px;">${esc(tr('Limit'))}: ${esc(definition.limitations)}</div>` : ''}</div>`).join('')}</div>`;
+  }
+  return html;
+}
+
+// ===================== RE Gate（三态门控，迁移文档 §2.2）=====================
+// gate v1：severity 聚合（confirmed 实例计数 + 密度归一）三态；
+// critical 与 quality_score 独立共存——高分不能掩盖结构损伤。
+function renderRseGateBlock(f) {
+  const rse = (f.evaluation_payload || {}).rse;
+  if (!rse) return '';
+  const gate = rse.gate_status || {};
+  const qp = rse.quality_profile || {};
+  const st = gate.status || 'not_evaluated';
+  const GATE_META = {
+    passed:        { c: 'var(--good)', zh: '无 confirmed critical/error', en: 'no confirmed critical/error' },
+    warned:        { c: 'var(--warn)', zh: '局部错误（孤立 critical 或系统性 error）', en: 'local errors (isolated critical or systemic error)' },
+    blocked:       { c: 'var(--bad)',  zh: '系统性结构损伤', en: 'systemic structural damage' },
+    not_evaluated: { c: 'var(--bad)',  zh: '未评估（保守视为阻断）', en: 'not evaluated (conservatively blocked)' }
+  };
+  const meta = GATE_META[st] || GATE_META.not_evaluated;
+  const crit = gate.critical_count != null ? gate.critical_count : null;
+  const err = gate.error_count != null ? gate.error_count : null;
+  const cntColor = (crit || 0) > 0 ? 'var(--bad)' : ((err || 0) > 0 ? 'var(--warn)' : 'var(--good)');
+  let html = sectionHead('RE Gate · ' + (UI_LANG === 'zh' ? '三态门控' : 'three-state gate'),
+    UI_LANG === 'zh' ? 'severity 聚合（confirmed 实例 + 密度归一）；与 quality_score 独立共存，critical 不被高分掩盖' : 'severity aggregation over confirmed instances, scale-normalized; coexists with quality_score — critical cannot be masked by a high score');
+  html += `<div class="viz-grid">
+    <div class="viz-card"><div class="label">Gate</div><div class="value" style="color:${meta.c};">${esc(st)}</div><div style="font-size:9px;color:var(--text-dim);">${UI_LANG === 'zh' ? meta.zh : meta.en}</div></div>
+    <div class="viz-card"><div class="label">${UI_LANG === 'zh' ? '质量分' : 'Quality'}</div><div class="value">${qp.quality_score != null ? Number(qp.quality_score).toFixed(3) : '—'}</div><div style="font-size:9px;color:var(--text-dim);">0.8·invariant + 0.2·csc</div></div>
+    <div class="viz-card"><div class="label">critical / error</div><div class="value" style="color:${cntColor};">${crit != null ? crit : '—'} / ${err != null ? err : '—'}</div><div style="font-size:9px;color:var(--text-dim);">${gate.total_chunks != null ? (UI_LANG === 'zh' ? `confirmed 实例 · 密度归一 / ${gate.total_chunks} chunks` : `confirmed instances · density-normalized / ${gate.total_chunks} chunks`) : ''}</div></div>
+  </div>`;
+  const chips = [];
+  // capability_evaluation_block_prereg_v1：evaluation_status 已归层 capability_profile.evaluation
+  const _evalStatus = (rse.capability_profile && rse.capability_profile.evaluation && rse.capability_profile.evaluation.status) || null;
+  if (_evalStatus && _evalStatus !== 'complete') chips.push(`<span class="chip">${esc(String(_evalStatus))}</span>`);
+  if (qp.confidence != null) chips.push(`<span class="chip">${UI_LANG === 'zh' ? '置信度' : 'confidence'}: <b>${Number(qp.confidence).toFixed(2)}</b></span>`);
+  if ((gate.exempted_modes || []).length) chips.push(`<span class="chip" title="${UI_LANG === 'zh' ? 'applicability 豁免（规则 1）：无对应结构证据' : 'applicability exemption (rule 1): no matching structural evidence'}">${UI_LANG === 'zh' ? '豁免' : 'exempted'}: <b>${esc(gate.exempted_modes.join(' · '))}</b></span>`);
+  if ((gate.issues || []).length) chips.push(`<span class="chip">${UI_LANG === 'zh' ? '问题模式' : 'issues'}: <b>${esc(gate.issues.join(' · '))}</b></span>`);
+  if ((qp.errors || []).length) chips.push(`<span class="chip">${UI_LANG === 'zh' ? '评估错误' : 'errors'}: <b>${esc(qp.errors.map(e => (e && (e.type || e.code)) || '?').join(' · '))}</b></span>`);
+  if (chips.length) html += `<div class="chip-row" style="margin-top:6px;">${chips.join('')}</div>`;
+  return html;
+}
+
+function renderCoherenceSection(f) {
+  const cc = f.coherence_curve;
+  const hasCoherence = cc && cc.paragraph_count >= 4 && cc.tfidf_similarities && cc.tfidf_similarities.length > 0;
+  if (!hasCoherence) return '';
+  const valleyCount = (cc.valley_positions || []).length;
+  const hasTexttiling = cc.texttiling_scores && cc.texttiling_scores.length > 0;
+  return `<div style="margin-bottom:12px;">
+    <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+      <span>Coherence Curve · 语义连贯度下钻</span>
+      <span style="font-size:10px;font-weight:400;color:var(--text-dim);">${cc.paragraph_count} paragraphs · ${valleyCount} valley${valleyCount !== 1 ? 's' : ''} detected ${hasTexttiling ? ' · TF-IDF + TextTiling' : ' · TF-IDF only'}</span>
+    </div>
+    <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:10px;">
+      <div style="position:relative;height:200px;"><canvas id="coherenceCanvas"></canvas></div>
+      ${valleyCount > 0 ? renderValleyBadges(cc) : '<div style="font-size:10px;color:var(--text-dim);margin-top:6px;">No significant coherence valleys detected.</div>'}
+    </div>
+  </div>`;
+}
+
+function mountCoherenceChart(f) {
+  const cc = f.coherence_curve;
+  if (!cc || !(cc.paragraph_count >= 4) || !cc.tfidf_similarities || !cc.tfidf_similarities.length) return;
+  renderCoherenceChart(cc);
+}
+
+function renderValleyBadges(cc) {
+  if (!cc.valley_positions || !cc.valley_positions.length) return '';
+  const maxConf = Math.max(...(cc.valley_confidences || [0]));
+  return cc.valley_positions.map((pos, i) => {
+    const conf = cc.valley_confidences ? cc.valley_confidences[i] : 0;
+    const bp = cc.boundary_pressures ? cc.boundary_pressures[i] : null;
+    const sources = bp ? bp.sources.join('+') : '';
+    const tfidfScore = bp && bp.tfidf_score != null ? bp.tfidf_score.toFixed(2) : null;
+    const isStrongest = conf === maxConf && maxConf > 0;
+    const borderColor = isStrongest ? 'rgba(255,176,32,0.6)' : 'rgba(255,176,32,0.2)';
+    const bgColor = isStrongest ? 'rgba(255,176,32,0.15)' : 'rgba(255,176,32,0.06)';
+    return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;background:${bgColor};border:1px solid ${borderColor};border-radius:3px;padding:2px 7px;margin:2px;"><span style="font-weight:600;">p${pos}→p${pos+1}</span>${tfidfScore !== null ? `<span style="color:var(--text-dim);font-size:9px;">sim=${tfidfScore}</span>` : ''}<span style="color:var(--text-dim);font-size:9px;">pressure=${conf.toFixed(2)}</span>${sources ? `<span style="color:var(--text-dim);font-size:9px;">[${esc(sources)}]</span>` : ''}</span>`;
+  }).join('');
+}
+
+function renderCoherenceChart(cc) {
+  const canvas = document.getElementById('coherenceCanvas');
+  if (!canvas) return;
+  if (coherenceChart) { coherenceChart.destroy(); coherenceChart = null; }
+  const n = cc.tfidf_similarities.length;
+  const labels = Array.from({length: n}, (_, i) => `p${i}→p${i+1}`);
+  const datasets = [{ label: 'TF-IDF similarity', data: cc.tfidf_similarities, borderColor: 'rgba(74,158,255,0.9)', backgroundColor: 'rgba(74,158,255,0.08)', borderWidth: 1.5, pointRadius: 2.5, tension: 0.3, fill: true }];
+  if (cc.texttiling_scores && cc.texttiling_scores.length === n) datasets.push({ label: 'TextTiling overlap', data: cc.texttiling_scores, borderColor: 'rgba(61,220,132,0.8)', backgroundColor: 'transparent', borderWidth: 1.5, borderDash: [4,3], pointRadius: 2, tension: 0.3, fill: false });
+  const valleySet = new Set(cc.valley_positions || []);
+  coherenceChart = new Chart(canvas, {
+    type: 'line', data: { labels, datasets },
+    options: { responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+      scales: { x: { ticks: { color: 'rgba(154,160,172,0.7)', font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }, grid: { color: 'rgba(42,47,61,0.6)' } },
+                y: { min: 0, max: 1, ticks: { color: 'rgba(154,160,172,0.7)', font: { size: 9 }, stepSize: 0.2 }, grid: { color: 'rgba(42,47,61,0.6)' } } },
+      plugins: { legend: { labels: { color: 'rgba(228,230,235,0.8)', font: { size: 10 }, boxWidth: 12 } },
+        tooltip: { callbacks: { afterLabel: (ctx) => { const idx = ctx.dataIndex; if (valleySet.has(idx)) { const bp = cc.boundary_pressures ? cc.boundary_pressures.find(b => b.paragraph_idx === idx) : null; const conf = bp ? bp.confidence.toFixed(2) : '?'; return `⚡ coherence valley (pressure=${conf})`; } return ''; } } } } },
+    plugins: [{ id: 'valleyLines', afterDraw(chart) { if (!valleySet.size) return; const ctx2 = chart.ctx, xScale = chart.scales.x, yScale = chart.scales.y; ctx2.save(); ctx2.strokeStyle = 'rgba(255,92,92,0.55)'; ctx2.lineWidth = 1; ctx2.setLineDash([3,3]); valleySet.forEach(idx => { const x = xScale.getPixelForValue(idx); ctx2.beginPath(); ctx2.moveTo(x, yScale.top); ctx2.lineTo(x, yScale.bottom); ctx2.stroke(); }); ctx2.restore(); } }],
+  });
+}
+
+function pathBlock(path, obj) {
+  const hint = path ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;font-family:ui-monospace,monospace;">📄 ${esc(path)}</div>` : '';
+  return hint + `<div class="json-view">${esc(JSON.stringify(obj, null, 2))}</div>`;
+}
+
+// ===================== Unit helpers =====================
+// （旧 parseMarkdownChunks 已移除：markdown 层为纯呈现层，
+//   不再携带 "# Chunk N" / META 注释标记，结构化事实读 representation JSON）
+
+// ===================== Panel helpers =====================
+// sectionHead：面板分区标题（可附一句说明，替代裸字段堆叠）
+function sectionHead(title, hint) {
+  return `<div style="font-size:10px;color:var(--text-dim);margin:8px 0 4px;font-weight:600;border-bottom:1px solid var(--border);padding-bottom:2px;">${esc(title)}${hint ? ' <span style="font-weight:400;">· ' + esc(hint) + '</span>' : ''}</div>`;
+}
+
+// reports/index.html 位于 run 根目录下的 reports/，所以其他产物需要回退一级。
+function artifactHref(path) {
+  if (!path) return '';
+  const normalized = String(path).replaceAll('\\\\', '/');
+  return normalized.startsWith('../') || /^[a-z][a-z0-9+.-]*:/i.test(normalized) ? normalized : '../' + normalized;
+}
+
+function artifactLink(path, label) {
+  if (!path) return '';
+  const href = artifactHref(path);
+  return `<a href="${esc(href)}" target="_blank" style="font-size:10px;color:var(--accent);margin-top:10px;font-family:ui-monospace,monospace;text-decoration:none;">↗ 📄 ${esc(path)}${label ? ' <span style="font-family:inherit;color:var(--text-dim);">— ' + esc(label) + '</span>' : ''}</a>`;
+}
+
+// artifactRef 保留给纯文本引用；可打开的 run 产物一律使用 artifactLink。
+function artifactRef(path, label) {
+  return artifactLink(path, label);
+}
+
+// Render a RepresentationUnit object (from JSON) as a unit card
+function unitCardFromObj(i, unit, p) {
+const text = unit.text || '';
+const sizeChars = text.length;  // 策略限制按字符计，与 RuntimePackagingPolicy 一致
+const meta = unit.metadata || {};
+// Merge heading_path from unit level and metadata
+const headingPath = unit.heading_path || meta.heading_path || [];
+const granularity = unit.granularity || meta.granularity || 'base';
+const unitType = unit.unit_type || meta.unit_type || 'narrative';
+// Build meta-like object for unitCard
+const enrichedMeta = {
+  ...meta,
+  heading_path: headingPath.length ? headingPath : (meta.heading_path || []),
+  block_type: meta.block_type || unitType,
+};
+if (granularity !== 'base') enrichedMeta.block_type = granularity + ':' + unitType;
+return unitCard(i, text, sizeChars, enrichedMeta, p);
+}
+
+function unitCard(i, text, sizeChars, meta, p) {
+  const over = sizeChars > p.hard, under = sizeChars < p.soft * 0.3;
+  const color = over ? 'var(--bad)' : under ? 'var(--warn)' : 'var(--good)';
+  let structHtml = '';
+  if (meta) {
+    const bits = [];
+    if (meta.heading_path && meta.heading_path.length) bits.push('📂 ' + esc(meta.heading_path.join(' › ')));
+    else if (meta.heading) bits.push('📂 ' + esc(meta.heading));
+    if (meta.block_type) bits.push(`<span style="font-family:ui-monospace,monospace">${esc(meta.block_type)}</span>`);
+    if (meta.unit_count && meta.unit_count > 1) bits.push(`${meta.unit_count} blocks`);
+    if (meta.oversized) bits.push('<span style="color:var(--bad)">oversized</span>');
+    if (meta.context_from_previous) bits.push('<span style="color:var(--accent)">ctx↑</span>');
+    if (bits.length) structHtml = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:3px;line-height:1.5;">${bits.join(' · ')}</div>`;
+  }
+  // 标注态：边界线显示标注按钮
+  let annoPrefix = '';
+  let annoSuffix = '';
+  if (annoMode) {
+    const fp = FILES[currentIdx].file_path;
+    // boundary i = gap between unit i-1 and unit i
+    if (i > 0) {
+      const key = fp + '::' + i;
+      const cur = boundaryAnnos[key] || '';
+      annoPrefix = `<div class="bnd-anno-bar">
+        <span style="margin-right:2px;">↕ bnd ${i-1}↔${i}</span>
+        <button class="bnd-btn ok ${cur==='ok'?'active':''}" onclick="setBndAnno('${esc(fp)}',${i},'ok');event.stopPropagation();">✓ ok</button>
+        <button class="bnd-btn merge ${cur==='merge'?'active':''}" onclick="setBndAnno('${esc(fp)}',${i},'merge');event.stopPropagation();">↪ merge</button>
+        <button class="bnd-btn split ${cur==='split'?'active':''}" onclick="setBndAnno('${esc(fp)}',${i},'split');event.stopPropagation();">✂ split</button>
+        ${cur ? '<button class="bnd-btn" onclick="setBndAnno(\''+esc(fp)+'\','+i+',\'\');event.stopPropagation();" style="margin-left:4px;">clear</button>' : ''}
+      </div>`;
+    }
+  }
+  return `${annoPrefix}<div style="border:1px solid var(--border);border-left:2px solid ${color};border-radius:4px;padding:8px;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-bottom:3px;">
+      <span style="color:${color};font-weight:600;">Unit ${i}</span><span>${sizeChars} chars</span>
+    </div>${structHtml}<div class="doc-text" style="font-size:11px;">${esc(text.slice(0, 600))}${text.length > 600 ? '\n...' : ''}</div>
+  </div>`;
+}
+
+// ===================== Bottom panels =====================
+function renderBottom() {
+const f = FILES[currentIdx];
+renderQualityScores(f);
+renderOpt(f);
+renderIssuesPanel(f);
+renderAnnoPanel(f);
+}
+
+// ===================== Corpus pie =====================
+function renderCorpusPie() {
+  const dist = RUN_DATA.stats.corpus_distribution || {};
+  const tiers = Object.keys(dist);
+  if (!tiers.length) { document.getElementById('corpusHint').textContent = ''; document.getElementById('corpusLegend').innerHTML = '<div class="empty">no data</div>'; return; }
+  const labels = tiers.map(t => dist[t].label || t);
+  const counts = tiers.map(t => dist[t].count || 0);
+  const colors = tiers.map(t => dist[t].color || '#6b7280');
+  const total = counts.reduce((a, b) => a + b, 0);
+  const meaningful = tiers.filter(t => dist[t].is_meaningful).reduce((s, t) => s + (dist[t].count || 0), 0);
+  document.getElementById('corpusHint').textContent = meaningful + '/' + total + ' meaningful';
+  const data = { labels, datasets: [{ data: counts, backgroundColor: colors.map(c => c + 'cc'), borderColor: colors, borderWidth: 1.5 }] };
+  if (corpusPieChart) { corpusPieChart.data = data; corpusPieChart.update('none'); }
+  else { corpusPieChart = new Chart(document.getElementById('corpusPie'), { type: 'doughnut', data, options: { responsive: true, maintainAspectRatio: false, cutout: '52%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => { const v = counts[ctx.dataIndex], pct = total ? (v / total * 100).toFixed(1) : 0; return labels[ctx.dataIndex] + ': ' + v + ' (' + pct + '%)'; } } } } } }); }
+  const legend = document.getElementById('corpusLegend');
+  // ---- Run 间对比：与上一次 run 的 tier 构成 / filtered 质量分漂移 ----
+  const prevRun = RUN_DATA.stats.previous_run || {};
+  const prevSnap = prevRun.corpus_tier_snapshot || {};
+  const prevTiers = prevSnap.tiers || {};
+  const prevFilt = (prevRun.quality_filtered || {}).overall;
+  const curFilt = (RUN_DATA.stats.quality_filtered || {}).overall;
+  let driftHtml = '';
+  if (prevSnap && prevSnap.run_id) {
+    let parts = ['Δ vs run ' + esc(String(prevSnap.run_id).slice(5, 21))];
+    if (prevFilt != null && curFilt != null) {
+      const dQuality = curFilt - prevFilt;
+      parts.push('filtered quality ' + (dQuality >= 0 ? '+' : '') + dQuality.toFixed(3));
+    }
+    if (prevSnap.total != null && total) {
+      parts.push('files ' + (total - prevSnap.total >= 0 ? '+' : '') + (total - prevSnap.total));
+    }
+    driftHtml = '<div style="font-size:9px;color:var(--text-dim);margin-top:5px;border-top:1px solid var(--border);padding-top:4px;">' + parts.join(' · ') + '</div>';
+  } else {
+    driftHtml = '<div style="font-size:9px;color:var(--text-dim);margin-top:5px;border-top:1px solid var(--border);padding-top:4px;">no previous run for drift diff</div>';
+  }
+  legend.innerHTML = tiers.map((t, i) => {
+    const v = counts[i], pct = total ? (v / total * 100) : 0;
+    const me = dist[t].is_meaningful ? '' : '<span style="color:var(--text-dim);font-size:9px;"> excluded</span>';
+    // drift delta for this tier
+    let dHtml = '';
+    const prevEntry = prevTiers[t];
+    if (prevEntry != null) {
+      const dPct = pct - (prevEntry.pct || 0);
+      if (Math.abs(dPct) >= 0.05) {
+        dHtml = '<span style="color:' + (dPct > 0 ? '#ff8c00' : '#4a9eff') + ';font-size:9px;margin-left:3px;" title="pct vs prev ' + (prevEntry.pct || 0).toFixed(1) + '%">' + (dPct > 0 ? '+' : '') + dPct.toFixed(1) + '</span>';
+      }
+    }
+    return '<div style="display:flex;align-items:center;gap:5px;font-size:10px;line-height:1.6;"><span style="width:8px;height:8px;border-radius:2px;background:' + colors[i] + ';flex-shrink:0;"></span><span>' + esc(labels[i]) + dHtml + '</span><span style="margin-left:auto;font-family:ui-monospace,monospace;">' + v + ' (' + pct.toFixed(0) + '%)</span>' + me + '</div>';
+  }).join('') + driftHtml;
+}
+
+// ===================== Archive expansion (run-level) =====================
+// 数据源：RUN_DATA.stats.archive_expansion（采集期压缩包展开事实，
+// 由 report_generator 注入；无压缩包时面板保持隐藏）
+function renderArchivePanel() {
+  const panel = document.getElementById('archivePanel');
+  if (!panel) return;
+  const exp = ((RUN_DATA.stats || {}).archive_expansion) || {};
+  const archives = exp.archives || [];
+  if (!archives.length && !(exp.extracted_members > 0)) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const zh = UI_LANG === 'zh';
+  document.getElementById('archiveHint').textContent =
+    archives.length + (zh ? ' 个压缩包 · ' : ' archives · ') +
+    (exp.extracted_members ?? 0) + (zh ? ' 个成员落盘' : ' members extracted');
+  const body = document.getElementById('archiveBody');
+  body.innerHTML = archives.map(a => {
+    const skipped = a.skipped || {};
+    const parts = [];
+    if (skipped.unsupported) parts.push(skipped.unsupported + (zh ? ' 不支持后缀' : ' unsupported'));
+    if (skipped.oversize) parts.push(skipped.oversize + (zh ? ' 超限' : ' oversize'));
+    if (skipped.unsafe) parts.push(skipped.unsafe + (zh ? ' 不安全路径' : ' unsafe'));
+    if (skipped.duplicate) parts.push(skipped.duplicate + (zh ? ' 重名' : ' duplicate'));
+    const totalSkipped = (skipped.unsupported || 0) + (skipped.oversize || 0) + (skipped.unsafe || 0) + (skipped.duplicate || 0);
+    const complete = (a.extracted ?? 0) >= (a.members ?? 0);
+    const extColor = complete ? 'var(--good)' : (totalSkipped ? 'var(--warn)' : 'var(--text)');
+    let html = '<div style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;margin-bottom:6px;font-size:10px;">';
+    html += '<div style="display:flex;align-items:center;gap:6px;">';
+    html += '<span style="background:var(--panel-2);border:1px solid var(--border);border-radius:3px;padding:0 5px;font-family:ui-monospace,monospace;font-size:9px;color:var(--accent);">' + esc(a.format || '?') + '</span>';
+    html += '<span style="font-family:ui-monospace,monospace;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="' + esc(a.archive) + '">' + esc(String(a.archive || '').split('/').pop()) + '</span>';
+    html += '<span style="font-family:ui-monospace,monospace;color:' + extColor + '" title="' + (zh ? '落盘/成员总数' : 'extracted/members') + '">' + (a.extracted ?? 0) + '/' + (a.members ?? 0) + '</span>';
+    html += '</div>';
+    if (parts.length) html += '<div style="color:var(--warn);font-size:9px;margin-top:3px;">skipped: ' + esc(parts.join(' · ')) + '</div>';
+    if (a.notes && a.notes.length) html += '<div style="color:var(--text-dim);font-size:9px;margin-top:2px;">' + esc(a.notes.join('; ')) + '</div>';
+    html += '</div>';
+    return html;
+  }).join('') || '<div class="empty">no data</div>';
+}
+
+// ===================== Quality with drill-down =====================
+// issue-first：诊断问题 + 调优建议优先于分数展示（质量评估定位是 degradation diagnostics，不是评分权威）
+// 严重度即颜色：critical 红 / poor 橙 / fair 黄 / ok 绿；算式仅在分数不好时显示
+function linkedFailures(f, dim) {
+  const modes = DIM_FAILURE_MAP[dim] || [];
+  return (f && f.failure_modes || []).filter(m => modes.includes(m.mode));
+}
+
+function renderIssuesBlock(f) {
+  const issues = (f && f.quality_issues) || [];
+  const labels = RUN_DATA.dimension_labels || {};
+  if (!issues.length) {
+    return '<div style="font-size:9px;color:var(--good);border:1px solid rgba(61,220,132,.25);border-radius:4px;padding:5px 6px;margin-bottom:8px;">✓ no quality issues detected for this doc</div>';
+  }
+  let html = '';
+  for (const iss of issues) {
+    const dimLabel = labels[iss.dimension] || iss.dimension;
+    // 严重度：score 距 threshold 距离；无分数时按 classification 降级
+    let lv;
+    if (iss.score != null && iss.threshold != null) lv = sevLevel(iss.score, iss.threshold);
+    else lv = iss.classification === 'primary' ? 'critical' : 'poor';
+    const c = SEV[lv];
+    const clsTitle = { primary: 'primary', secondary: 'secondary (primary also failed)', independent: 'independent' };
+    // 算式只在分数不好（critical/poor）时有信息量；critical 加差距值
+    let formulaHtml = '';
+    if ((lv === 'critical' || lv === 'poor') && iss.score != null && iss.threshold != null) {
+      formulaHtml = iss.score.toFixed(2) + ' &lt; ' + iss.threshold.toFixed(2);
+      if (lv === 'critical') {
+        const gap = iss.score - iss.threshold;
+        formulaHtml += ' <span style="color:var(--bad);font-weight:600;">(' + (gap >= 0 ? '+' : '') + gap.toFixed(2) + ')</span>';
+      }
+    }
+    const linked = linkedFailures(f, iss.dimension);
+    const evIcon = expandedIssueDims.has(iss.dimension) ? '▾' : '▸';
+    html += '<div style="border:1px solid ' + c + '66;border-left:3px solid ' + c + ';border-radius:4px;padding:4px 6px;margin-bottom:5px;background:' + c + '0a;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;">'
+      + '<span style="font-size:10px;font-weight:600;color:' + c + ';">' + esc(dimLabel)
+      + (iss.classification ? '<span style="font-size:8px;font-weight:400;color:var(--text-dim);margin-left:4px;">[' + esc(clsTitle[iss.classification] || iss.classification) + ']</span>' : '')
+      + '</span>'
+      + (formulaHtml ? '<span style="font-family:ui-monospace,monospace;font-size:9px;color:var(--text-dim);" title="score vs threshold">' + formulaHtml + '</span>' : '')
+      + '</div>'
+      + (iss.message ? '<div style="font-size:9px;color:var(--text);opacity:.85;margin-top:2px;">' + esc(iss.message) + '</div>' : '');
+    const acts = iss.suggested_actions || [];
+    if (acts.length) {
+      html += '<div style="font-size:9px;color:var(--good);margin-top:3px;">→ ' + acts.map(a => esc(a)).join('<br>→ ') + '</div>';
+    }
+    // 证据层入口：点开看关联的 failure 实例（裁决 → 证据）
+    if (linked.length) {
+      html += '<div style="font-size:9px;color:var(--accent);margin-top:3px;cursor:pointer;" onclick="toggleIssueEvidence(\'' + iss.dimension + '\')">' + evIcon + ' evidence · ' + linked.length + ' linked failure' + (linked.length > 1 ? 's' : '') + '</div>';
+      if (expandedIssueDims.has(iss.dimension)) {
+        html += '<div class="drill-panel" style="margin-top:3px;">';
+        for (const m of linked) {
+          const human = humanizeFailure(m.mode);
+          html += '<div class="drill-item"><span style="color:var(--text);">' + esc(human.title + (m.count > 1 ? ' ×' + m.count : '')) + '</span> — ' + esc(human.impact) + '</div>';
+        }
+        html += '<div class="drill-item" style="color:var(--text-dim);">unit 级明细可在 Scores 面板点击维度名 drill down</div></div>';
+      }
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+// Warning Tiering 面板（tiering_v1，run 级静态聚合视图）
+// 契约：docs/internal/zh/warning_tiering_prereg_v1.md（冻结 2026-09-27）。
+// 两源各标各的：DQR 源 = 事实播报（单档 observe）；RE 源 = gate 三态 +
+// note 档（同型聚合）。只做派生视图，打分层零变更。
+function renderWarningTiering() {
+  const panel = document.getElementById('warningTieringPanel');
+  const body = document.getElementById('tieringBody');
+  const hint = document.getElementById('tieringHint');
+  const wt = RUN_DATA.warning_tiering;
+  if (!wt || !wt.n_docs) { if (panel) panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const tierColor = t => t === 'blocked' ? 'var(--bad)' : (t === 'warned' ? 'var(--warn)' : (t === 'passed' ? 'var(--good)' : 'var(--text-dim)'));
+  let html = '';
+  // 分级总表：source × tier
+  html += '<div style="margin-bottom:7px;">' + (wt.tier_table || []).map(row =>
+    `<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-bottom:1px solid var(--border);">`
+    + `<span><b style="color:var(--accent);">${row.source}</b> · <b style="color:${row.source === 'rse' ? tierColor(row.tier) : 'var(--text-dim)'};">${esc(row.tier)}</b></span>`
+    + `<span style="color:var(--text-dim);">${row.instances} 条${row.distinct !== row.instances ? ' · ' + row.distinct + ' 型' : ''} · ${row.docs} 文档</span></div>`
+  ).join('') + '</div>';
+  // DQR 模板明细（事实播报，同型聚合 + 样例）
+  const dqr = wt.dqr || {};
+  if (dqr.distinct_templates) {
+    html += `<div style="margin:8px 0 3px;font-size:9px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dim);">${UI_LANG === 'zh' ? 'DQR 事实播报' : 'DQR observations'} · ${dqr.total_strings} → ${dqr.distinct_templates} 型</div>`;
+    html += (dqr.templates || []).map(t =>
+      `<div style="padding:3px 0;border-bottom:1px solid rgba(42,47,61,.5);">`
+      + `<div style="display:flex;justify-content:space-between;gap:8px;"><span>${esc(t.template)}</span><span style="color:var(--text-dim);white-space:nowrap;">${t.instances}× · ${t.docs} docs</span></div>`
+      + (t.samples || []).map(s => `<div style="font-size:9px;color:var(--text-dim);margin-top:1px;">↳ ${esc(s.doc)}: ${esc(s.text)}</div>`).join('')
+      + `</div>`
+    ).join('');
+  }
+  // RE 判断提示：gate 分布 + note 档（同型聚合）
+const rse = wt.rse || {};
+const gate = rse.gate_dist || {};
+  const gateBits = Object.entries(gate).filter(([, c]) => c).map(([t, c]) =>
+    `<span style="color:${tierColor(t)};">${t} <b>${c}</b></span>`).join(' · ');
+  if (gateBits) html += `<div style="margin:8px 0 3px;font-size:9px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dim);">${UI_LANG === 'zh' ? 'RE gate 判断' : 'RE gate verdicts'}</div><div>${gateBits}</div>`;
+  const notes = rse.notes || [];
+  if (notes.length) {
+    html += `<div style="margin:8px 0 3px;font-size:9px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dim);">${UI_LANG === 'zh' ? 'RE note（同型聚合）' : 'RE notes (aggregated)'}</div>`;
+    html += notes.map(n =>
+      `<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-bottom:1px solid var(--border);">`
+      + `<span><b>${esc(n.kind)}</b> · ${esc(n.detail)}</span><span style="color:var(--text-dim);white-space:nowrap;">${n.docs}/${wt.n_docs} docs</span></div>`
+    ).join('');
+  }
+  html += `<div style="margin-top:7px;font-size:9px;color:var(--text-dim);">${UI_LANG === 'zh' ? '原始逐条 warnings 仍在 raw/debug 产物（审计链路不截断）；本视图为分级聚合派生。' : 'raw per-instance warnings remain in raw/debug artifacts; this view is a tiered aggregation.'}</div>`;
+  body.innerHTML = html;
+  hint.textContent = `${dqr.total_strings || 0}/${wt.n_docs || 0}`;
+}
+
+// Issues 面板（取代原 Diagnostics 面板）：质量裁决 + 证据 + 处方 + 输入层备注
+function renderIssuesPanel(f) {
+  const body = document.getElementById('issuesBody');
+  const hint = document.getElementById('issuesHint');
+  if (!f) { hint.textContent = ''; body.innerHTML = '<div class="empty">no file</div>'; return; }
+  let html = '';
+  // 解析失败：最高优先级红卡
+  if (!f.success) {
+    html += '<div style="border:1px solid ' + SEV.critical + '66;border-left:3px solid ' + SEV.critical + ';border-radius:4px;padding:4px 6px;margin-bottom:6px;">'
+      + '<div style="font-size:10px;font-weight:600;color:' + SEV.critical + ';">Parse Failed</div>'
+      + '<div style="font-size:9px;color:var(--text);opacity:.85;">' + esc(f.error || 'unknown error') + '</div></div>';
+  }
+  html += renderIssuesBlock(f);
+  // 输入层备注（doc quality，锅不在 chunker）——有问题才显示
+  const dq = f.doc_quality || {};
+  const dqWarns = ((dq.issues || []).slice(0, 3)).map(s => (s.dimension || 'quality') + ': ' + (s.message || ''));
+  const dqMeta = dq.metadata || {};
+  if (dqMeta.has_hidden_unicode) dqWarns.push('Hidden Unicode');
+  if (dqMeta.has_ansi_escape) dqWarns.push('ANSI Escape');
+  if (dqWarns.length) {
+    html += '<div style="font-size:9px;color:var(--text-dim);margin-top:8px;border-top:1px solid var(--border);padding-top:5px;">'
+      + '<span style="text-transform:uppercase;letter-spacing:.3px;">Input Quality</span>（doc 本身问题，与分块无关） doc_quality=' + (dq.overall != null ? dq.overall.toFixed(2) : '—')
+      + '<div style="margin-top:2px;line-height:1.6;">' + dqWarns.map(w => esc(w)).join('<br>') + '</div></div>';
+  }
+  // 未构成 issue 的 failure 记录：汇总一行，不抢戏
+  const consumed = new Set();
+  for (const iss of (f.quality_issues || [])) (DIM_FAILURE_MAP[iss.dimension] || []).forEach(m => consumed.add(m.mode));
+  const rest = (f.failure_modes || []).filter(m => !consumed.has(m.mode));
+  if (rest.length) {
+    html += '<div style="font-size:9px;color:var(--text-dim);margin-top:6px;">另有 ' + rest.length + ' 条未构成 issue 的 failure 记录（' + rest.map(m => esc(humanizeFailure(m.mode).title + (m.count > 1 ? '×' + m.count : ''))).join('、') + '），完整明细见 debug 层</div>';
+  }
+  body.innerHTML = html;
+  const n = (f.quality_issues || []).length;
+  hint.textContent = n ? n + ' issue' + (n > 1 ? 's' : '') : 'clean';
+}
+
+function toggleIssueEvidence(dim) {
+  if (expandedIssueDims.has(dim)) expandedIssueDims.delete(dim);
+  else expandedIssueDims.add(dim);
+  renderIssuesPanel(FILES[currentIdx]);
+  if (typeof renderOutput === 'function') renderOutput(); // 质量详情层里的展开同步刷新
+}
+
+function renderQualityScores(f) {
+  const barsEl = document.getElementById('dualBars');
+  const hint = document.getElementById('dualHint');
+  const stats = RUN_DATA.stats;
+  const filt = stats.quality_filtered || {};
+  const overall = stats.avg_quality_overall || 0;
+  const filtered = filt.overall;
+  const meaningfulCount = filt.meaningful_count || 0;
+  const totalCount = stats.total_files || 0;
+  const dimFiltered = stats.quality_filtered_dimensions || {};
+  const labels = RUN_DATA.dimension_labels || {};
+  const avgDims = RUN_DATA.avg_dimensions || {};
+  const fileQuality = (f && f.quality_overall != null) ? f.quality_overall : null;
+  const fileDims = (f && f.quality_dimensions) ? f.quality_dimensions : {};
+
+  hint.textContent = meaningfulCount + '/' + totalCount + ' docs';
+  renderRadar(f);
+
+  if (filtered == null) { barsEl.innerHTML = '<div class="empty">no filtered quality</div>'; return; }
+
+  let html = '';
+  // Score cards（本面板只讲现状：分数 + 雷达 + 问题维度；issues 在隔壁 Issues 面板）
+  if (fileQuality != null) {
+    const fileColor = fileQuality >= filtered ? 'var(--good)' : 'var(--bad)';
+    html += '<div style="display:flex;gap:6px;margin-bottom:8px;">'
+      + '<div style="flex:1;text-align:center;border:1px solid rgba(255,176,32,.3);border-radius:4px;padding:4px 2px;"><div style="font-size:8px;color:var(--text-dim);">File</div><div style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;color:' + fileColor + ';">' + fileQuality.toFixed(3) + confDot(f) + '</div></div>'
+      + '<div style="flex:1;text-align:center;border:1px solid rgba(255,140,0,.3);border-radius:4px;padding:4px 2px;"><div style="font-size:8px;color:var(--text-dim);">Overall</div><div style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;color:#ff8c00;">' + overall.toFixed(3) + '</div></div>'
+      + '<div style="flex:1;text-align:center;border:1px solid rgba(61,220,132,.3);border-radius:4px;padding:4px 2px;"><div style="font-size:8px;color:var(--text-dim);">Filtered</div><div style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;color:var(--good);">' + filtered.toFixed(3) + '</div></div>'
+      + '</div>';
+  }
+
+  // Per-dimension：健康折叠，只有问题维度展开细节（面板高度由问题数决定）
+  const dimKeysArr = Object.keys(labels);
+  if (dimKeysArr.length && f) {
+    const sevMap = {};
+    const problemDims = [], okDims = [];
+    for (const dim of dimKeysArr) {
+      const lv = dimSeverity(f, dim);
+      sevMap[dim] = lv;
+      if (lv === 'ok') okDims.push(dim); else problemDims.push(dim);
+    }
+    // 问题维度按严重度排序：critical → poor → fair → unknown
+    const order = { critical: 0, poor: 1, fair: 2, unknown: 3, ok: 4 };
+    problemDims.sort((a, b) => (order[sevMap[a]] ?? 9) - (order[sevMap[b]] ?? 9));
+    html += '<div style="font-size:9px;color:var(--text-dim);margin:6px 0 4px;text-transform:uppercase;letter-spacing:.3px;border-top:1px solid var(--border);padding-top:6px;">Dimensions <span style="font-size:8px;">(click ▸ to drill down)</span></div>';
+    if (okDims.length) {
+      html += '<div style="font-size:9px;color:var(--good);margin-bottom:6px;" title="' + okDims.map(d => esc(labels[d])).join(' · ') + '">✓ ' + okDims.length + '/' + dimKeysArr.length + ' dims healthy</div>';
+    }
+    for (const dim of problemDims) {
+      const lv = sevMap[dim];
+      const c = SEV[lv];
+      const cVal = fileDims[dim];
+      const thr = dimThreshold(dim);
+      const oVal = avgDims[dim];
+      const fVal = dimFiltered[dim] != null ? dimFiltered[dim] : null;
+      const z = f ? fileZScore(f, dim) : 0;
+      const isLow = z < -1.5;
+      const zBadge = isLow ? `<span style="color:var(--bad);font-size:8px;" title="z-score: ${z.toFixed(2)}">⚠</span>` : '';
+      const drillIcon = activeDrillDim === dim ? '▾' : '▸';
+      const cW = cVal != null ? Math.min(cVal * 100, 100) : 0;
+      const thrW = thr != null ? Math.min(thr * 100, 100) : null;
+      const oW = oVal != null ? Math.min(oVal * 100, 100) : null;
+      const fW = fVal != null ? Math.min(fVal * 100, 100) : null;
+
+      html += `<div style="margin-bottom:6px;border:1px solid ${c}44;border-radius:3px;padding:3px 4px;">`
+        + `<div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px;cursor:pointer;" onclick="toggleDrill('${dim}')">`
+        + `<span style="color:${c};font-weight:600;">${drillIcon} ${esc(labels[dim])} ${zBadge}</span>`
+        + `<span style="font-family:ui-monospace,monospace;color:${c};">${cVal != null ? cVal.toFixed(2) : '—'}</span></div>`
+        + '<div style="display:flex;gap:4px;align-items:center;">'
+        + '<div style="position:relative;flex:1;height:5px;background:var(--panel-2);border-radius:3px;">'
+        + `<span style="position:absolute;left:0;top:0;bottom:0;width:${cW}%;background:${c};border-radius:3px;"></span>`
+        + (thrW != null ? `<span style="position:absolute;left:${thrW}%;top:-2px;width:2px;height:9px;background:var(--text-dim);" title="threshold ${thr.toFixed(2)}"></span>` : '')
+        + (oW != null ? `<span style="position:absolute;left:${oW}%;top:0;width:2px;height:5px;background:#ff8c00;opacity:.7;" title="all avg ${oVal.toFixed(2)}"></span>` : '')
+        + (fW != null ? `<span style="position:absolute;left:${fW}%;top:0;width:2px;height:5px;background:var(--good);opacity:.7;" title="filtered avg ${fVal.toFixed(2)}"></span>` : '')
+        + '</div></div>';
+
+      // Drill-down evidence
+      if (activeDrillDim === dim && f) {
+        html += renderDrillEvidence(dim, f, labels[dim]);
+      }
+      html += '</div>';
+    }
+  } else if (dimKeysArr.length) {
+    html += '<div class="empty" style="font-size:9px;">no per-file dimensions — showing corpus averages in radar</div>';
+  }
+
+  // Filtered confidence
+  if (filt.confidence != null) {
+    html += '<div class="metric" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;"><span class="mk">Filt. Conf.</span><span class="mbar"><span class="mfill" style="width:' + (filt.confidence * 100) + '%;background:var(--text-dim);"></span></span><span class="mv">' + filt.confidence.toFixed(3) + '</span></div>';
+  }
+
+  barsEl.innerHTML = html;
+}
+
+function toggleDrill(dim) {
+  activeDrillDim = (activeDrillDim === dim) ? null : dim;
+  renderQualityScores(FILES[currentIdx]);
+}
+
+// Drill-down: show specific unit-level evidence for a dimension
+// （证据源：failure_modes —— evaluation.json 一级维度，比旧版 markdown 反解析 heuristic 更真实）
+function renderDrillEvidence(dim, f, label) {
+  const modes = (DIM_FAILURE_MAP[dim] || []);
+  const failures = (f.failure_modes || []).filter(m => modes.includes(m.mode));
+  let items = failures.map(m => ({ unit: -1, issue: `${humanizeFailure(m.mode).title} × ${m.count} — ${humanizeFailure(m.mode).impact}` }));
+
+  if (!items.length) items.push({ unit: -1, issue: 'no failure-mode evidence mapped for this dimension (heuristic checks removed with markdown re-parsing)' });
+
+  let html = '<div class="drill-panel"><div class="drill-title">▸ Evidence for ' + esc(label) + '</div>';
+  for (const it of items.slice(0, 8)) {
+    const unitLabel = it.unit >= 0 ? `Unit ${it.unit}` : 'global';
+    html += `<div class="drill-item"><span style="color:var(--text);">${esc(unitLabel)}</span> — ${esc(it.issue)}</div>`;
+  }
+  if (items.length > 8) html += `<div class="drill-item" style="color:var(--text-dim);">... and ${items.length - 8} more</div>`;
+  html += '</div>';
+  return html;
+}
+
+function renderRadar(f) {
+  const labels = RUN_DATA.dimension_labels;
+  if (!labels) return;
+  const keys = Object.keys(labels);
+  const hasFileDims = !!(f && f.quality_dimensions && Object.keys(f.quality_dimensions).length);
+  const dims = hasFileDims ? f.quality_dimensions : RUN_DATA.avg_dimensions;
+  const dimFilt = RUN_DATA.stats.quality_filtered_dimensions || {};
+  const filtDims = {};
+  for (const k of keys) { const entry = dimFilt[k]; filtDims[k] = (entry != null) ? entry : (RUN_DATA.avg_dimensions[k] ?? 0); }
+  if (!keys.length) { if (radarChart) { radarChart.destroy(); radarChart = null; } return; }
+  // This File：点的颜色 = 该维度严重度（哪个角是红的一眼可见）；无文件分数时退回蓝
+  const fileColors = keys.map(k => hasFileDims ? SEV[dimSeverity(f, k)] : '#4a9eff');
+  const fileBg = keys.map(k => { const c = fileColors[keys.indexOf(k)]; return c + '26'; });
+  const data = { labels: keys.map(k => labels[k]), datasets: [
+    { label: 'This File', data: keys.map(k => dims[k] ?? 0), backgroundColor: hasFileDims ? fileBg : 'rgba(74,158,255,.15)', borderColor: '#4a9eff', pointBackgroundColor: fileColors, pointBorderColor: fileColors, pointRadius: 2.5, borderWidth: 1.5 },
+    { label: 'All Avg', data: keys.map(k => RUN_DATA.avg_dimensions[k] ?? 0), backgroundColor: 'rgba(255,140,0,.06)', borderColor: '#ff8c00', pointRadius: 0, borderWidth: 1, borderDash: [4,3] },
+    { label: 'Normal Avg', data: keys.map(k => filtDims[k] ?? 0), backgroundColor: 'rgba(61,220,132,.06)', borderColor: '#3ddc84', pointRadius: 0, borderWidth: 1, borderDash: [4,3] },
+  ]};
+  if (radarChart) { radarChart.data = data; radarChart.update('none'); return; }
+  radarChart = new Chart(document.getElementById('radar'), { type: 'radar', data, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#9aa0ac', font: { size: 9 }, boxWidth: 8, padding: 4 } } }, scales: { r: { min: 0, max: 1, ticks: { display: false, stepSize: .25 }, grid: { color: '#2a2f3d' }, angleLines: { color: '#2a2f3d' }, pointLabels: { color: '#9aa0ac', font: { size: 9 } } } } } });
+}
+
+// ===================== Quality Analysis Charts =====================
+let qualityDistChart = null, dimCorrChart = null, humanCorrChart = null;
+
+function renderQualityAnalysis() {
+  const panel = document.getElementById('qualityAnalysisPanel');
+  const hasHuman = RUN_DATA.human_evaluations && RUN_DATA.human_evaluations.length > 0;
+  const hasDims = dimKeys.length > 0;
+  if (!hasDims && !hasHuman) { panel.style.display = 'none'; return; }
+  panel.style.display = 'flex';
+
+  // 1. Score Distribution Histogram
+  const qualityValues = FILES.map(f => f.quality_overall).filter(v => v != null);
+  if (qualityValues.length && document.getElementById('qualityDistChart')) {
+    const bins = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
+    const counts = bins.slice(0, -1).map((lo, i) => qualityValues.filter(v => v >= lo && v < bins[i + 1]).length);
+    counts[counts.length - 1] += qualityValues.filter(v => v >= 1.0).length;
+    if (qualityDistChart) qualityDistChart.destroy();
+    qualityDistChart = new Chart(document.getElementById('qualityDistChart'), {
+      type: 'bar',
+      data: { labels: ['0-0.2', '0.2-0.4', '0.4-0.6', '0.6-0.8', '0.8-1.0'], datasets: [{ label: 'Files', data: counts, backgroundColor: ['#ff5c5c', '#ffb020', '#ff8c00', '#4a9eff', '#3ddc84'], borderRadius: 3 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { color: '#9aa0ac', font: { size: 9 } }, grid: { color: '#2a2f3d' } }, x: { ticks: { color: '#9aa0ac', font: { size: 9 } }, grid: { display: false } } } }
+    });
+  }
+
+  // 2. Dimension Correlation Matrix (simplified: show pairwise scatter)
+  if (hasDims && dimKeys.length >= 2 && document.getElementById('dimCorrChart')) {
+    const d1 = dimKeys[0], d2 = dimKeys[1];
+    const pts = FILES.map(f => ({ x: (f.quality_dimensions || {})[d1], y: (f.quality_dimensions || {})[d2] })).filter(p => p.x != null && p.y != null);
+    if (pts.length && dimCorrChart) dimCorrChart.destroy();
+    dimCorrChart = new Chart(document.getElementById('dimCorrChart'), {
+      type: 'scatter',
+      data: { datasets: [{ label: RUN_DATA.dimension_labels[d1] + ' vs ' + RUN_DATA.dimension_labels[d2], data: pts, backgroundColor: 'rgba(74,158,255,.5)', pointRadius: 3 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: RUN_DATA.dimension_labels[d1], color: '#9aa0ac', font: { size: 9 } }, min: 0, max: 1, ticks: { color: '#9aa0ac', font: { size: 9 } }, grid: { color: '#2a2f3d' } }, y: { title: { display: true, text: RUN_DATA.dimension_labels[d2], color: '#9aa0ac', font: { size: 9 } }, min: 0, max: 1, ticks: { color: '#9aa0ac', font: { size: 9 } }, grid: { color: '#2a2f3d' } } } }
+    });
+  }
+
+  // 3. Human Correlation (if available)
+  if (hasHuman && document.getElementById('humanCorrChart')) {
+    const he = RUN_DATA.human_evaluations;
+    const pts = he.map(h => ({ x: h.quality_score, y: h.human_score })).filter(p => p.x != null && p.y != null);
+    if (pts.length && humanCorrChart) humanCorrChart.destroy();
+    humanCorrChart = new Chart(document.getElementById('humanCorrChart'), {
+      type: 'scatter',
+      data: { datasets: [{ label: 'Quality vs Human', data: pts, backgroundColor: 'rgba(61,220,132,.5)', pointRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'Quality Score', color: '#9aa0ac', font: { size: 9 } }, min: 0, max: 1, ticks: { color: '#9aa0ac', font: { size: 9 } }, grid: { color: '#2a2f3d' } }, y: { title: { display: true, text: 'Human Score', color: '#9aa0ac', font: { size: 9 } }, min: 0, max: 1, ticks: { color: '#9aa0ac', font: { size: 9 } }, grid: { color: '#2a2f3d' } } } }
+    });
+  } else if (document.getElementById('humanCorrChart')) {
+    document.getElementById('humanCorrChart').parentElement.innerHTML = '<div class="empty" style="height:100%;display:flex;align-items:center;justify-content:center;">No human evaluation data</div>';
+  }
+
+  // Summary text
+  const summary = [];
+  if (qualityValues.length) {
+    const avg = qualityValues.reduce((a, b) => a + b, 0) / qualityValues.length;
+    const good = qualityValues.filter(v => v >= 0.7).length;
+    summary.push(`Avg Quality: ${avg.toFixed(3)} · ${good}/${qualityValues.length} files ≥ 0.7`);
+  }
+  if (hasHuman) {
+    const he = RUN_DATA.human_evaluations;
+    const corr = he.length > 1 ? computePearson(he.map(h => h.quality_score), he.map(h => h.human_score)) : 0;
+    summary.push(`Human correlation: r=${corr.toFixed(3)} (n=${he.length})`);
+  }
+  document.getElementById('qualitySummaryBody').innerHTML = summary.join('<br>');
+}
+
+function computePearson(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 2) return 0;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) { const a = xs[i] - mx, b = ys[i] - my; num += a * b; dx += a * a; dy += b * b; }
+  return dx && dy ? num / Math.sqrt(dx * dy) : 0;
+}
+
+function renderOpt(f) {
+  const body = document.getElementById('optBody');
+  const p = BASE_POLICY;
+  const hint = document.getElementById('optHint');
+  if (!f) { body.innerHTML = '<div class="empty">no file</div>'; return; }
+  let optRecHtml = renderOptimizerRecs(p);
+  hint.textContent = '';
+  // packaging 统计：base units（事实源：内嵌 representation payload，file:// 下可靠）
+  const repr = f.representation;
+  const baseG = (repr && repr.granularities && repr.granularities.base) || null;
+  const baseUnits = (baseG && baseG.units) || [];
+  const sizes = baseUnits.map(u => (u.text || '').length);  // 字符数，与策略限制同单位
+  const avg = sizes.length ? sizes.reduce((a, b) => a + b, 0) / sizes.length : 0;
+  const over = sizes.filter(t => t > p.hard).length;
+  const tiny = sizes.filter(t => t < p.soft * 0.3).length;
+  const unitTotal = baseG ? baseG.unit_count : f.chunk_count;
+  const sampledNote = baseG && baseG.truncated ? 'showing ' + sizes.length + ' of ' + unitTotal : String(f.chunk_count);
+  body.innerHTML = optRecHtml + sectionHead('Current Packaging', 'base units from embedded representation')
+    + statRow('units', unitTotal, sampledNote)
+    + statRow('avg size (chars)', Math.round(avg), 'target ' + p.soft)
+    + statRow('over hard', over, over ? '⚠' : '✓')
+    + statRow('tiny chunks', tiny, tiny ? '⚠' : '✓');
+}
+
+// ===================== Optimizer recommendations（run 内冷路径搜索） =====================
+function renderOptimizerRecs(p) {
+  const opt = RUN_DATA.stats.optimization_summary || {};
+  if (!opt || !opt.sampled_files) return '';
+  if (opt.error) return `<div style="font-size:10px;color:var(--warn);border:1px dashed var(--warn);border-radius:4px;padding:6px 8px;margin-bottom:8px;">optimizer error: ${esc(opt.error)}</div>`;
+  const rec = opt.global_recommendation || {};
+  let html = '<div style="border:1px solid rgba(255,176,32,.3);background:rgba(255,176,32,.05);border-radius:4px;padding:7px 9px;margin-bottom:8px;">';
+  html += '<div style="font-size:10px;font-weight:600;color:var(--warn);margin-bottom:4px;">⚡ Optimizer suggestions <span style="font-weight:400;color:var(--text-dim);">(' + opt.sampled_files + ' files, ' + esc(opt.mode || '') + ', advisory only)</span></div>';
+  if (rec.chunk_size_median != null) {
+    const curSoft = p.soft, sugSoft = Math.round(rec.chunk_size_median);
+    const diff = sugSoft - curSoft;
+    html += statRow('suggested soft', sugSoft, diff === 0 ? '≈ current' : (diff > 0 ? '+' : '') + diff + ' vs current');
+  }
+  if (rec.overlap_median != null) html += statRow('suggested overlap', rec.overlap_median, rec.overlap_median === 0 ? 'none' : '');
+  if (rec.boundary_mode) {
+    const votes = Object.entries(rec.boundary_votes || {}).map(([b, n]) => b + '×' + n).join(' ');
+    html += statRow('suggested boundary', rec.boundary_mode, votes);
+  }
+  if (rec.scale_median) html += statRow('suggested scale', rec.scale_median, '');
+  const cats = opt.per_category || {};
+  const catKeys = Object.keys(cats);
+  if (catKeys.length) {
+    html += '<div style="font-size:9px;color:var(--text-dim);margin:4px 0 2px;">per category (best vs baseline)</div>';
+    for (const cat of catKeys.slice(0, 5)) {
+      for (const e of cats[cat].slice(0, 2)) {
+        const bs = e.best_strategy || {};
+        const imp = (e.best_score != null && e.baseline_score != null) ? (e.best_score - e.baseline_score) : null;
+        html += '<div style="font-size:9px;color:var(--text-dim);line-height:1.5;display:flex;gap:4px;">'
+          + '<span style="color:var(--text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(e.file) + '">' + esc(e.file) + '</span>'
+          + '<span style="font-family:ui-monospace,monospace;">' + esc([bs.boundary, bs.scale].filter(Boolean).join('/')) + '</span>'
+          + (imp != null ? '<span style="margin-left:auto;color:' + (imp > 0 ? 'var(--good)' : 'var(--text-dim)') + ';">' + (imp >= 0 ? '+' : '') + imp.toFixed(3) + '</span>' : '')
+          + '</div>';
+      }
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function statRow(k, v, extra) { return `<div class="metric"><span class="mk">${k}</span><span style="font-family:ui-monospace,monospace;font-weight:600;">${v}</span><span style="font-size:10px;color:var(--text-dim);margin-left:auto;">${extra}</span></div>`; }
+
+// renderDiag 已被 renderIssuesPanel 取代：证据层并入 issue 卡片，输入层问题降级为备注
+
+// ===================== Boundary annotation =====================
+function renderAnnoPanel(f) {
+  const panel = document.getElementById('annoPanel');
+  const body = document.getElementById('annoBody');
+  const hint = document.getElementById('annoHint');
+  if (!f) { panel.style.display = 'none'; return; }
+
+  const stats = annoStatsForFile(f.file_path);
+  if (!stats.total) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  // 回归核对：检查标注的边界在当前 run 中是否仍存在
+  // unit count 直接取 base 粒度计数（事实源：representation JSON / chunk_count）
+  const curUnitCount = f.chunk_count || 0;
+
+  // 统计：标注的 boundary_index 是否仍然有效（i.e., < curUnitCount）
+  let consistent = 0, stale = 0;
+  const details = [];
+  for (const [key, verdict] of Object.entries(boundaryAnnos)) {
+    if (!key.startsWith(f.file_path + '::')) continue;
+    const idx = +key.split('::')[1];
+    const stillValid = idx < curUnitCount;
+    const label = verdict === 'ok' ? '✓ ok' : verdict === 'merge' ? '↪ merge' : '✂ split';
+    if (stillValid) {
+      consistent++;
+      details.push(`<span style="color:${verdict==='ok'?'var(--good)':verdict==='merge'?'var(--warn)':'var(--bad)'};">bnd ${idx-1}↔${idx} ${label}</span>`);
+    } else {
+      stale++;
+      details.push(`<span style="color:var(--text-dim);text-decoration:line-through;" title="此边界已不存在（unit 数量变化）">bnd ${idx-1}↔${idx} ${label}</span>`);
+    }
+  }
+
+  hint.textContent = stats.total + ' annos · ' + consistent + ' consistent / ' + stale + ' stale';
+  let html = '';
+  // 摘要
+  html += '<div style="display:flex;gap:8px;margin-bottom:6px;font-size:10px;">';
+  html += `<span style="color:var(--good);">✓ ok: ${stats.ok}</span>`;
+  html += `<span style="color:var(--warn);">↪ merge: ${stats.merge}</span>`;
+  html += `<span style="color:var(--bad);">✂ split: ${stats.split}</span>`;
+  html += '</div>';
+  // 回归核对
+  if (stale > 0) {
+    html += `<div style="font-size:10px;color:var(--warn);margin-bottom:4px;">⚠ ${stale} 条标注的边界在本 run 中已不存在（unit 数量从标注时变化），仅 ${consistent} 条仍有效</div>`;
+  } else if (consistent > 0) {
+    html += `<div style="font-size:10px;color:var(--good);margin-bottom:4px;">✓ 所有 ${consistent} 条标注的边界在本 run 中仍然有效</div>`;
+  }
+  // 明细
+  if (details.length) {
+    html += '<div style="font-size:9px;color:var(--text-dim);line-height:1.8;max-height:80px;overflow-y:auto;">' + details.join(' · ') + '</div>';
+  }
+  // 导出
+  html += '<button class="btn ghost" style="width:100%;margin-top:6px;font-size:10px;" onclick="exportBoundaryAnnos()">Export All Boundary Annotations</button>';
+  body.innerHTML = html;
+}
+
+function toggleAnnoMode() {
+  annoMode = !annoMode;
+  document.getElementById('sAnno').style.color = annoMode ? 'var(--accent)' : '';
+  document.getElementById('sAnnoLabel').style.color = annoMode ? 'var(--accent)' : '';
+  renderOutput();
+}
+
+function setBndAnno(filePath, unitIdx, verdict) {
+  const key = filePath + '::' + unitIdx;
+  if (verdict) {
+    boundaryAnnos[key] = verdict;
+  } else {
+    delete boundaryAnnos[key];
+  }
+  saveBoundaryAnnos();
+  updateAnnoCount();
+  renderOutput();
+}
+
+function updateAnnoCount() {
+  const count = Object.keys(boundaryAnnos).length;
+  document.getElementById('sAnno').textContent = count;
+}
+
+function saveBoundaryAnnos() {
+  localStorage.setItem(ANNO_KEY, JSON.stringify(boundaryAnnos));
+}
+
+function loadBoundaryAnnos() {
+  try {
+    const key = 'provendoc_boundary_annos_' + RUN_DATA.run_id;
+    return JSON.parse(localStorage.getItem(key)) || {};
+  } catch (e) { return {}; }
+}
+
+function annoStatsForFile(filePath) {
+  let ok = 0, merge = 0, split = 0;
+  for (const [k, v] of Object.entries(boundaryAnnos)) {
+    if (k.startsWith(filePath + '::')) {
+      if (v === 'ok') ok++;
+      else if (v === 'merge') merge++;
+      else if (v === 'split') split++;
+    }
+  }
+  return { ok, merge, split, total: ok + merge + split };
+}
+
+function exportBoundaryAnnos() {
+  const count = Object.keys(boundaryAnnos).length;
+  if (!count) { alert('还没有标注任何边界。'); return; }
+  // 按 file 分组，结构化输出
+  const byFile = {};
+  for (const [key, verdict] of Object.entries(boundaryAnnos)) {
+    const [fp, idxStr] = key.split('::');
+    if (!byFile[fp]) byFile[fp] = [];
+    byFile[fp].push({ boundary_index: +idxStr, verdict });
+  }
+  const summary = { ok: 0, merge: 0, split: 0 };
+  for (const v of Object.values(boundaryAnnos)) {
+    if (summary[v] != null) summary[v]++;
+  }
+  const out = {
+    run_id: RUN_DATA.run_id,
+    total_annotations: count,
+    summary,
+    files: byFile
+  };
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'boundary_annos_' + RUN_DATA.run_id + '.json';
+  a.click();
+}
+
+// ===================== Export =====================
+function exportAll() {
+  if (Object.keys(boundaryAnnos).length) exportBoundaryAnnos();
+}
+
+// ===================== Layout: visible drawer, drag & reset =====================
+// 首屏默认只服务于“选文件 → 看原文 → 看输出”。运行级分析按需展开。
+const LAYOUT_KEY = 'provendoc_layout_' + RUN_DATA.run_id;
+const LAYOUT_DEFAULT = { files: 230, docRatio: 0.5, analysisHeight: 320, analysisOpen: false };
+let layout = loadLayout();
+
+function clampNum(v, lo, hi, fallback) {
+  v = Number(v);
+  if (!isFinite(v)) return fallback;
+  return Math.min(hi, Math.max(lo, v));
+}
+function loadLayout() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY));
+    if (saved && typeof saved === 'object') {
+      return {
+        files: clampNum(saved.files, 180, 480, LAYOUT_DEFAULT.files),
+        docRatio: clampNum(saved.docRatio, 0.2, 0.8, LAYOUT_DEFAULT.docRatio),
+        analysisHeight: clampNum(saved.analysisHeight, 180, Math.max(180, window.innerHeight * 0.7), LAYOUT_DEFAULT.analysisHeight),
+        analysisOpen: saved.analysisOpen === true,
+      };
+    }
+  } catch (e) { /* 忽略损坏的存储 */ }
+  return { ...LAYOUT_DEFAULT };
+}
+function saveLayout() {
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) {}
+}
+function applyLayout() {
+  const files = document.querySelector('.col-files');
+  files.style.flexBasis = layout.files + 'px';
+  files.style.width = layout.files + 'px';
+  const doc = document.querySelector('.col-doc');
+  const out = document.querySelector('.col-output');
+  const pct = Math.round(layout.docRatio * 100);
+  doc.style.flex = '0 1 ' + pct + '%';
+  out.style.flex = '1 1 0';
+
+  const drawer = document.getElementById('analysisDrawer');
+  const content = document.getElementById('analysisContent');
+  const toggle = document.getElementById('analysisToggle');
+  drawer.classList.toggle('open', layout.analysisOpen);
+  content.style.height = layout.analysisHeight + 'px';
+  toggle.setAttribute('aria-expanded', String(layout.analysisOpen));
+  document.getElementById('analysisChevron').textContent = layout.analysisOpen ? '⌄' : '›';
+  document.getElementById('analysisState').textContent = layout.analysisOpen ? (UI_TEXT[UI_LANG]['Collapse'] || '收起') : (UI_TEXT[UI_LANG]['Expand'] || '展开');
+}
+function resetLayout() {
+  layout = { ...LAYOUT_DEFAULT };
+  saveLayout();
+  applyLayout();
+}
+function toggleAnalysisDrawer() {
+  layout.analysisOpen = !layout.analysisOpen;
+  saveLayout();
+  applyLayout();
+}
+function makeDrag(handleId, onStart, onMove, onEnd, cursor) {
+  const handle = document.getElementById(handleId);
+  if (!handle) return;
+    handle.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    handle.classList.add('dragging');
+    document.body.classList.add('resizing');
+    document.body.style.cursor = cursor;
+    // 合成/非真实指针下 setPointerCapture 可能抛 InvalidPointerId；捕获失败不致命，
+    // document 级监听已足够完成拖拽。
+    try { handle.setPointerCapture?.(e.pointerId); } catch (err) { /* ignore */ }
+    const ctx = onStart(e);
+    function move(ev) { onMove(ev, ctx); }
+    function up(ev) {
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      if (onEnd) onEnd(ev, ctx);
+    }
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+  });
+}
+function initResizers() {
+  makeDrag('filesResizer',
+    e => ({ startX: e.clientX, startW: layout.files }),
+    (e, c) => { layout.files = clampNum(c.startW + (e.clientX - c.startX), 180, 480, c.startW); applyLayout(); },
+    () => saveLayout(), 'col-resize'
+  );
+  makeDrag('docResizer',
+    e => {
+      const main = document.querySelector('.main');
+      return { startX: e.clientX, mainW: main.getBoundingClientRect().width, startRatio: layout.docRatio };
+    },
+    (e, c) => {
+      if (!c.mainW) return;
+      layout.docRatio = clampNum(c.startRatio + (e.clientX - c.startX) / c.mainW, 0.2, 0.8, c.startRatio);
+      applyLayout();
+    },
+    () => saveLayout(), 'col-resize'
+  );
+  makeDrag('analysisResizer',
+    e => ({ startY: e.clientY, startH: layout.analysisHeight }),
+    (e, c) => {
+      layout.analysisHeight = clampNum(c.startH - (e.clientY - c.startY), 180, Math.max(180, window.innerHeight * 0.7), c.startH);
+      applyLayout();
+    },
+    () => saveLayout(), 'row-resize'
+  );
+}
+
+// ===================== Utils =====================
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// ===================== Invisible character visualization =====================
+// Source text remains untouched.  Only non-layout controls, Unicode format
+// characters and non-ASCII space/separator characters are replaced in the
+// DOM with an explicit code-point marker.  LF/CRLF/TAB stay as actual layout
+// characters, so the preview preserves the editor's ordinary line and column
+// semantics rather than turning all whitespace into tokens.  Bidi control
+// characters are the one further exception: they stay literal so the
+// browser's bidirectional algorithm reproduces the editor's visual ordering
+// (an RLO-wrapped run renders mirrored in the source view, exactly as the
+// file looks in an editor); the legend below still counts and names them.
+const IV_NAMED_CHARS = Object.freeze({
+  0x0000: 'NULL', 0x0001: 'START OF HEADING', 0x0002: 'START OF TEXT',
+  0x0003: 'END OF TEXT', 0x0004: 'END OF TRANSMISSION', 0x0005: 'ENQUIRY',
+  0x0006: 'ACKNOWLEDGE', 0x0007: 'BELL', 0x0008: 'BACKSPACE',
+  0x000B: 'LINE TABULATION', 0x000C: 'FORM FEED', 0x000E: 'SHIFT OUT',
+  0x000F: 'SHIFT IN', 0x0010: 'DATA LINK ESCAPE', 0x0011: 'DEVICE CONTROL ONE',
+  0x0012: 'DEVICE CONTROL TWO', 0x0013: 'DEVICE CONTROL THREE',
+  0x0014: 'DEVICE CONTROL FOUR', 0x0015: 'NEGATIVE ACKNOWLEDGE',
+  0x0016: 'SYNCHRONOUS IDLE', 0x0017: 'END OF TRANSMISSION BLOCK',
+  0x0018: 'CANCEL', 0x0019: 'END OF MEDIUM', 0x001A: 'SUBSTITUTE',
+  0x001B: 'ESCAPE', 0x001C: 'INFORMATION SEPARATOR FOUR',
+  0x001D: 'INFORMATION SEPARATOR THREE', 0x001E: 'INFORMATION SEPARATOR TWO',
+  0x001F: 'INFORMATION SEPARATOR ONE', 0x007F: 'DELETE',
+  0x0080: 'PADDING CHARACTER', 0x0081: 'HIGH OCTET PRESET',
+  0x0082: 'BREAK PERMITTED HERE', 0x0083: 'NO BREAK HERE',
+  0x0084: 'INDEX', 0x0085: 'NEXT LINE', 0x0086: 'START OF SELECTED AREA',
+  0x0087: 'END OF SELECTED AREA', 0x0088: 'CHARACTER TABULATION SET',
+  0x0089: 'CHARACTER TABULATION WITH JUSTIFICATION', 0x008A: 'LINE TABULATION SET',
+  0x008B: 'PARTIAL LINE FORWARD', 0x008C: 'PARTIAL LINE BACKWARD',
+  0x008D: 'REVERSE LINE FEED', 0x008E: 'SINGLE SHIFT TWO',
+  0x008F: 'SINGLE SHIFT THREE', 0x0090: 'DEVICE CONTROL STRING',
+  0x0091: 'PRIVATE USE ONE', 0x0092: 'PRIVATE USE TWO',
+  0x0093: 'SET TRANSMIT STATE', 0x0094: 'CANCEL CHARACTER',
+  0x0095: 'MESSAGE WAITING', 0x0096: 'START OF GUARDED AREA',
+  0x0097: 'END OF GUARDED AREA', 0x0098: 'START OF STRING',
+  0x0099: 'SINGLE GRAPHIC CHARACTER INTRODUCER',
+  0x009A: 'SINGLE CHARACTER INTRODUCER', 0x009B: 'CONTROL SEQUENCE INTRODUCER',
+  0x009C: 'STRING TERMINATOR', 0x009D: 'OPERATING SYSTEM COMMAND',
+  0x009E: 'PRIVACY MESSAGE', 0x009F: 'APPLICATION PROGRAM COMMAND',
+  0x00A0: 'NO-BREAK SPACE', 0x00AD: 'SOFT HYPHEN',
+  0x034F: 'COMBINING GRAPHEME JOINER', 0x061C: 'ARABIC LETTER MARK',
+  0x070F: 'SYRIAC ABBREVIATION MARK', 0x1680: 'OGHAM SPACE MARK',
+  0x180E: 'MONGOLIAN VOWEL SEPARATOR', 0x2000: 'EN QUAD', 0x2001: 'EM QUAD',
+  0x2002: 'EN SPACE', 0x2003: 'EM SPACE', 0x2004: 'THREE-PER-EM SPACE',
+  0x2005: 'FOUR-PER-EM SPACE', 0x2006: 'SIX-PER-EM SPACE',
+  0x2007: 'FIGURE SPACE', 0x2008: 'PUNCTUATION SPACE', 0x2009: 'THIN SPACE',
+  0x200A: 'HAIR SPACE', 0x200B: 'ZERO WIDTH SPACE',
+  0x200C: 'ZERO WIDTH NON-JOINER', 0x200D: 'ZERO WIDTH JOINER',
+  0x200E: 'LEFT-TO-RIGHT MARK', 0x200F: 'RIGHT-TO-LEFT MARK',
+  0x2028: 'LINE SEPARATOR', 0x2029: 'PARAGRAPH SEPARATOR',
+  0x202A: 'LEFT-TO-RIGHT EMBEDDING', 0x202B: 'RIGHT-TO-LEFT EMBEDDING',
+  0x202C: 'POP DIRECTIONAL FORMATTING', 0x202D: 'LEFT-TO-RIGHT OVERRIDE',
+  0x202E: 'RIGHT-TO-LEFT OVERRIDE', 0x202F: 'NARROW NO-BREAK SPACE',
+  0x205F: 'MEDIUM MATHEMATICAL SPACE', 0x2060: 'WORD JOINER',
+  0x2061: 'FUNCTION APPLICATION', 0x2062: 'INVISIBLE TIMES',
+  0x2063: 'INVISIBLE SEPARATOR', 0x2064: 'INVISIBLE PLUS',
+  0x2066: 'LEFT-TO-RIGHT ISOLATE', 0x2067: 'RIGHT-TO-LEFT ISOLATE',
+  0x2068: 'FIRST STRONG ISOLATE', 0x2069: 'POP DIRECTIONAL ISOLATE',
+  0x206A: 'INHIBIT SYMMETRIC SWAPPING', 0x206B: 'ACTIVATE SYMMETRIC SWAPPING',
+  0x206C: 'INHIBIT ARABIC FORM SHAPING', 0x206D: 'ACTIVATE ARABIC FORM SHAPING',
+  0x206E: 'NATIONAL DIGIT SHAPES', 0x206F: 'NOMINAL DIGIT SHAPES',
+  0x3000: 'IDEOGRAPHIC SPACE', 0xFEFF: 'ZERO WIDTH NO-BREAK SPACE / BOM',
+  0xFFF9: 'INTERLINEAR ANNOTATION ANCHOR', 0xFFFA: 'INTERLINEAR ANNOTATION SEPARATOR',
+  0xFFFB: 'INTERLINEAR ANNOTATION TERMINATOR',
+  // U+E0001 LANGUAGE TAG sits below the dynamic TAG-letter range
+  // (0xE0020-0xE007F) and needs an explicit registry entry.
+  0xE0001: 'LANGUAGE TAG'
+});
+const IV_CATEGORY_RE = /[\p{Cf}\p{Cc}\p{Zl}\p{Zp}\p{Zs}]/u;
+// Keep editor-visible layout characters literal.  U+0020 is intentionally
+// included here: only non-ASCII spaces/separators receive a diagnostic token.
+const IV_LAYOUT_CODEPOINTS = new Set([0x0009, 0x000A, 0x000D, 0x0020]);
+// Bidi controls stay literal in renderDocText: keeping the raw code points
+// in the DOM lets the browser re-run the Unicode BiDi algorithm, so the
+// Source Document pane mirrors the editor's visual order (RLO mirroring).
+const IV_BIDI_CODEPOINTS = new Set([
+  0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+  0x2066, 0x2067, 0x2068, 0x2069
+]);
+// Standard short abbreviations used by editors and Unicode tooling.  The
+// token text prefers these; the tooltip keeps the full Unicode name and code
+// point. Characters without a conventional abbreviation remain U+XXXX.
+const IV_ABBREV_CHARS = Object.freeze({
+  // C0 controls (TAB/LF/CR deliberately remain literal layout characters).
+  0x0000: 'NUL', 0x0001: 'SOH', 0x0002: 'STX', 0x0003: 'ETX',
+  0x0004: 'EOT', 0x0005: 'ENQ', 0x0006: 'ACK', 0x0007: 'BEL',
+  0x0008: 'BS', 0x000B: 'VT', 0x000C: 'FF', 0x000E: 'SO',
+  0x000F: 'SI', 0x0010: 'DLE', 0x0011: 'DC1', 0x0012: 'DC2',
+  0x0013: 'DC3', 0x0014: 'DC4', 0x0015: 'NAK', 0x0016: 'SYN',
+  0x0017: 'ETB', 0x0018: 'CAN', 0x0019: 'EM', 0x001A: 'SUB',
+  0x001B: 'ESC', 0x001C: 'FS', 0x001D: 'GS', 0x001E: 'RS',
+  0x001F: 'US', 0x007F: 'DEL',
+  // C1 controls.
+  0x0080: 'PAD', 0x0081: 'HOP', 0x0082: 'BPH', 0x0083: 'NBH',
+  0x0084: 'IND', 0x0085: 'NEL', 0x0086: 'SSA', 0x0087: 'ESA',
+  0x0088: 'HTS', 0x0089: 'HTJ', 0x008A: 'VTS', 0x008B: 'PLD',
+  0x008C: 'PLU', 0x008D: 'RI', 0x008E: 'SS2', 0x008F: 'SS3',
+  0x0090: 'DCS', 0x0091: 'PU1', 0x0092: 'PU2', 0x0093: 'STS',
+  0x0094: 'CCH', 0x0095: 'MW', 0x0096: 'SPA', 0x0097: 'EPA',
+  0x0098: 'SOS', 0x0099: 'SGCI', 0x009A: 'SCI', 0x009B: 'CSI',
+  0x009C: 'ST', 0x009D: 'OSC', 0x009E: 'PM', 0x009F: 'APC',
+  // Format, directional, and space characters.
+  0x00A0: 'NBSP', 0x00AD: 'SHY', 0x034F: 'CGJ', 0x061C: 'ALM',
+  0x070F: 'SAM', 0x1680: 'OGSP', 0x180E: 'MVS',
+  0x2000: 'ENSP', 0x2001: 'EMSP', 0x2002: 'ENSP', 0x2003: 'EMSP',
+  0x2004: '3MSP', 0x2005: '4MSP', 0x2006: '6MSP', 0x2007: 'FSP',
+  0x2008: 'PSP', 0x2009: 'THSP', 0x200A: 'HSP',
+  0x200B: 'ZWSP', 0x200C: 'ZWNJ', 0x200D: 'ZWJ',
+  0x200E: 'LRM', 0x200F: 'RLM', 0x2028: 'LS', 0x2029: 'PS',
+  0x202A: 'LRE', 0x202B: 'RLE', 0x202C: 'PDF',
+  0x202D: 'LRO', 0x202E: 'RLO', 0x202F: 'NNBSP',
+  0x205F: 'MMSP', 0x2060: 'WJ',
+  0x2066: 'LRI', 0x2067: 'RLI', 0x2068: 'FSI', 0x2069: 'PDI',
+  0x3000: 'IDSP', 0xFEFF: 'BOM',
+  0xE0001: 'LANG-TAG'
+});
+
+function codePointLabel(codePoint) {
+  return 'U+' + codePoint.toString(16).toUpperCase().padStart(codePoint > 0xFFFF ? 6 : 4, '0');
+}
+function tagCharacterName(codePoint) {
+  if (codePoint === 0xE007F) return 'CANCEL TAG';
+  if (codePoint >= 0xE0020 && codePoint <= 0xE007E) {
+    const ascii = codePoint - 0xE0000;
+    return 'TAG ' + (ascii >= 0x20 && ascii <= 0x7E ? String.fromCodePoint(ascii) : 'CHARACTER');
+  }
+  return null;
+}
+function tagCharacterToken(codePoint) {
+  if (codePoint === 0xE007F) return 'TAG-END';
+  if (codePoint >= 0xE0020 && codePoint <= 0xE007E) {
+    const ascii = codePoint - 0xE0000;
+    return ascii >= 0x20 && ascii <= 0x7E ? 'TAG-' + String.fromCodePoint(ascii) : 'TAG';
+  }
+  return null;
+}
+function unicodeCategoryName(codePoint) {
+  if (codePoint <= 0x001F || (codePoint >= 0x007F && codePoint <= 0x009F)) return 'control character';
+  if (codePoint === 0x2028) return 'line separator';
+  if (codePoint === 0x2029) return 'paragraph separator';
+  if (codePoint === 0x00A0 || (codePoint >= 0x1680 && codePoint <= 0x3000)) return 'space separator';
+  return 'format character';
+}
+function getInvisibleCharInfo(ch) {
+  const codePoint = ch.codePointAt(0);
+  if (IV_LAYOUT_CODEPOINTS.has(codePoint) || !IV_CATEGORY_RE.test(ch)) return null;
+  const name = IV_NAMED_CHARS[codePoint] || tagCharacterName(codePoint) || unicodeCategoryName(codePoint);
+  return {
+    codePoint,
+    label: codePointLabel(codePoint),
+    name,
+    token: IV_ABBREV_CHARS[codePoint] || tagCharacterToken(codePoint) || codePointLabel(codePoint)
+  };
+}
+function collectInvisibleCharacters(s) {
+  const counts = new Map();
+  for (const ch of String(s || '')) {
+    const info = getInvisibleCharInfo(ch);
+    if (!info) continue;
+    const entry = counts.get(info.codePoint) || { info, count: 0 };
+    entry.count += 1;
+    counts.set(info.codePoint, entry);
+  }
+  return [...counts.values()].sort((a, b) => a.info.codePoint - b.info.codePoint);
+}
+function renderDocText(s) {
+  let out = '';
+  for (const ch of String(s == null ? '' : s)) {
+    const codePoint = ch.codePointAt(0);
+    if (IV_BIDI_CODEPOINTS.has(codePoint)) {
+      // Literal bidi controls: the browser re-applies the Unicode BiDi
+      // algorithm, reproducing the editor's visual order (RLO mirroring).
+      out += esc(ch);
+      continue;
+    }
+    const info = getInvisibleCharInfo(ch);
+    out += info
+      ? `<span class="iv-char" title="${esc(info.name)} · ${info.label}">${info.token}</span>`
+      : esc(ch);
+  }
+  return out;
+}
+function renderSourcePreviewNotice(file) {
+  const el = document.getElementById('sourcePreviewNotice');
+  if (!el) return;
+  if (!file || !file.source_truncated) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const total = Number(file.source_char_count || 0).toLocaleString();
+  el.style.display = 'block';
+  el.textContent = `源文档预览仅内嵌前 ${RAW_TEXT_LIMIT_LABEL()} 个字符；完整源文本共 ${total} 个字符，仍保存在 raw JSON artifact 中。`;
+}
+function RAW_TEXT_LIMIT_LABEL() { return '20,000'; }
+function renderInvisibleLegend(s, isPreviewTruncated = false) {
+  const el = document.getElementById('ivLegend');
+  if (!el) return;
+  const counts = collectInvisibleCharacters(s);
+  if (!counts.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const prefix = isPreviewTruncated ? '特殊字符标记（仅当前预览计数）：' : '特殊字符标记：';
+  el.style.display = 'flex';
+  el.innerHTML = '<span>' + prefix + '</span>' + counts.map(({ info, count }) =>
+    `<span class="iv-char" title="${esc(info.name)} · ${info.label}">${info.token}</span><span>× ${count} · ${esc(info.name)}</span>`
+  ).join('');
+}
+
+document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return; if (e.key === 'ArrowLeft') navFile(-1); if (e.key === 'ArrowRight') navFile(1); });
+
+init();
+</script>
+</body>
+</html>

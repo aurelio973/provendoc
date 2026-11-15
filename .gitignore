@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Test / coverage caches
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Runtime outputs (per-run timestamp directories)
+runs/
+
+# REST API persistent batch jobs (durable upload + result state)
+jobs/
+
+# Parse cache
+.cache/
+
+# IDE
+.idea/
+.vscode/
+
+# Lint cache
+.ruff_cache/
+
+# OCR language packs (Tesseract traineddata binaries; see
+# provendoc.toml.example for download pointers)
+.tessdata/

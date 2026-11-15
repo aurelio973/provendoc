@@ -1,0 +1,305 @@
+# Provendoc recommendation rule table (schema v1)
+#
+# Deterministic mapping from diagnostics (evaluation dimensions, confirmed
+# retrieval failure modes, chunk metrics) to parameter suggestions.
+# Consumed by intelligence/recommendation/engine.py — the default
+# evaluate(recommend="rules") advice path.
+#
+# Authoring contract:
+#   * Every rule recommends ONE concrete parameter change ("to" is a
+#     literal value, never a relative hint) so suggested_params can be
+#     applied verbatim by the compare mode.
+#   * expected_effect is a hypothesis. Never write "will improve" —
+#     write what should improve, under which assumption.
+#   * side_effects is MANDATORY trade-off disclosure. A rule without
+#     honest side effects is a bug.
+#   * confidence is a corpus hit-rate style estimate. Seeded rules are
+#     marked verified_by.method = "seeded" until the offline optimizer
+#     runs + review_ledger adjudication replace them with measured rates.
+#   * conflicts_with lists rules that must not be recommended together;
+#     same-parameter rules with different targets conflict implicitly
+#     (the engine suppresses the weaker one and points at compare/search).
+
+schema_version = 1
+
+# ======================================================================
+# Structure Break — code/table/list/steps cut apart from their context
+# ======================================================================
+
+[[rule]]
+id = "structure_break_structural_boundary"
+issue = "structure_break"
+cause = "confirmed structure-break retrieval failures: code blocks, tables, lists or procedure steps are split across chunks (or separated from their surrounding explanation)"
+trigger = { kind = "failure_mode_present", modes = ["code_explanation_split", "explanation_code_split", "table_description_split", "procedure_step_split", "list_item_split"] }
+recommend = { parameter = "boundary_primary", to = "structural_block" }
+expected_effect = "structural blocks (code fences, tables, lists) become atomic boundaries, so they stop being cut mid-block"
+side_effects = [
+  "prose-heavy documents may get coarser, less uniform chunks",
+  "average chunk size grows; retrieval may return more irrelevant surrounding text",
+]
+confidence = 0.6
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+boundary_primary = { not_eq = "structural_block" }
+
+[[rule]]
+id = "structure_break_raise_hard_limit"
+issue = "structure_break"
+cause = "confirmed structure-break failures persist while boundary_primary is already structural_block — blocks are likely exceeding size_hard_limit and being force-split"
+trigger = { kind = "failure_mode_present", modes = ["code_explanation_split", "explanation_code_split", "table_description_split"] }
+recommend = { parameter = "size_hard_limit", to = 1500 }
+expected_effect = "oversized code blocks / tables fit inside a single chunk instead of being hard-split"
+side_effects = [
+  "larger chunks increase tokens per retrieval hit",
+  "distribution_uniformity and size_compliance scores may drop",
+]
+confidence = 0.55
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+boundary_primary = { eq = "structural_block" }
+size_hard_limit = { lt = 1500 }
+
+# ======================================================================
+# Context Loss — headings / section context / cross references
+# ======================================================================
+
+[[rule]]
+id = "context_loss_enable_heading_context"
+issue = "context_loss"
+cause = "confirmed context-loss failures (heading ambiguity / hierarchy ambiguity / section context loss) while context propagation is disabled"
+trigger = { kind = "failure_mode_present", modes = ["heading_ambiguity", "hierarchy_ambiguity", "section_context_loss"] }
+recommend = { parameter = "context_mode", to = "heading_only" }
+expected_effect = "chunks start carrying their heading path, so retrieval hits can be re-attached to their section"
+side_effects = [
+  "chunk metadata grows; heading-only context may be too thin for sections whose meaning depends on preceding prose",
+]
+confidence = 0.6
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+context_mode = { eq = "none" }
+
+[[rule]]
+id = "context_loss_strengthen_context"
+issue = "context_loss"
+cause = "confirmed context-loss failures persist under heading_only context — heading paths alone are not enough for this document"
+trigger = { kind = "failure_mode_present", modes = ["heading_ambiguity", "hierarchy_ambiguity", "section_context_loss"] }
+recommend = { parameter = "context_mode", to = "selective" }
+expected_effect = "selective propagation adds disambiguating context beyond bare headings"
+side_effects = [
+  "more duplicated context across chunks; embedding/storage volume grows",
+]
+confidence = 0.5
+conflicts_with = ["context_loss_enable_heading_context"]
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+context_mode = { eq = "heading_only" }
+
+[[rule]]
+id = "cross_reference_strengthen_context"
+issue = "cross_reference_break"
+cause = "confirmed cross-reference breaks: 'see section X.Y' references resolve in a different chunk than their target"
+trigger = { kind = "failure_mode_present", mode = "cross_reference_break" }
+recommend = { parameter = "context_mode", to = "selective" }
+expected_effect = "referenced targets or their summaries travel with the referencing chunk"
+side_effects = [
+  "more duplicated context across chunks",
+  "references to distant sections may still break — context propagation is local",
+]
+confidence = 0.5
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+context_mode = { in = ["none", "heading_only"] }
+
+[[rule]]
+id = "hierarchy_continuity_enable"
+issue = "context_loss"
+cause = "confirmed hierarchy/section context failures while the hierarchy_continuity invariant is disabled — headings do not open their own chunk"
+trigger = { kind = "failure_mode_present", modes = ["hierarchy_ambiguity", "section_context_loss"] }
+recommend = { parameter = "hierarchy_continuity", to = true }
+expected_effect = "each heading starts a fresh chunk carrying its full heading path"
+side_effects = [
+  "more, smaller chunks for deeply nested documents",
+]
+confidence = 0.55
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+hierarchy_continuity = { eq = false }
+
+# ======================================================================
+# Semantic Drift — chunks spanning section boundaries / discourse cuts
+# ======================================================================
+
+[[rule]]
+id = "semantic_drift_heading_boundary"
+issue = "semantic_drift"
+cause = "confirmed semantic drift: chunks start mid-section and cross into the next section, so their leading content loses its context"
+trigger = { kind = "failure_mode_present", mode = "semantic_drift" }
+recommend = { parameter = "boundary_primary", to = "heading_boundary" }
+expected_effect = "chunk boundaries align with section boundaries for this heading-structured document"
+side_effects = [
+  "very long sections produce oversized chunks that then hit size_hard_limit",
+  "documents with shallow/noisy heading structure may fragment",
+]
+confidence = 0.55
+conflicts_with = ["structure_break_structural_boundary"]
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+boundary_primary = { in = ["discourse_unit", "token_limit"] }
+
+[rule.when.document]
+has_headings = true
+
+[[rule]]
+id = "discourse_split_discourse_unit"
+issue = "discourse_split"
+cause = "confirmed discourse/definition-example splits in a flat (heading-free) document not currently using discourse-unit boundaries"
+trigger = { kind = "failure_mode_present", modes = ["discourse_split", "definition_example_split"] }
+recommend = { parameter = "boundary_primary", to = "discourse_unit" }
+expected_effect = "discourse markers (however/therefore/for example) become boundary signals, keeping definition-example pairs together"
+side_effects = [
+  "heading structure (if any appears later) is no longer the primary boundary signal",
+]
+confidence = 0.5
+conflicts_with = ["structure_break_structural_boundary", "semantic_drift_heading_boundary"]
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+boundary_primary = { not_eq = "discourse_unit" }
+
+[rule.when.document]
+has_headings = false
+
+[[rule]]
+id = "discourse_split_enable_locality"
+issue = "discourse_split"
+cause = "confirmed discourse/definition-example splits while the discourse_locality invariant is disabled"
+trigger = { kind = "failure_mode_present", modes = ["discourse_split", "definition_example_split"] }
+recommend = { parameter = "discourse_locality", to = true }
+expected_effect = "the locality invariant discourages cuts at discourse markers"
+side_effects = [
+  "boundary placement becomes less size-uniform around dense discourse markers",
+]
+confidence = 0.55
+verified_by = { method = "seeded", source = "FAILURE_MODE_DEFINITIONS fix strategies", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+discourse_locality = { eq = false }
+
+# ======================================================================
+# Quality dimension findings
+# ======================================================================
+
+[[rule]]
+id = "structural_integrity_block_complete"
+issue = "hierarchy_preservation"
+cause = "hierarchy_preservation score is below threshold while the structural_block_complete invariant is disabled"
+trigger = { kind = "dimension_below", dimension = "hierarchy_preservation", threshold = 0.6 }
+recommend = { parameter = "structural_block_complete", to = true }
+expected_effect = "structural blocks are kept intact instead of being split for size compliance"
+side_effects = [
+  "granularity_appropriateness may drop when intact blocks exceed the hard limit",
+]
+confidence = 0.55
+verified_by = { method = "seeded", source = "NarrativeQuality dimension actions", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+structural_block_complete = { eq = false }
+
+[[rule]]
+id = "boundary_quality_heading_boundary"
+issue = "boundary_cleanliness"
+cause = "boundary_cleanliness score is below threshold on a heading-structured document that is not using heading boundaries"
+trigger = { kind = "dimension_below", dimension = "boundary_cleanliness", threshold = 0.5 }
+recommend = { parameter = "boundary_primary", to = "heading_boundary" }
+expected_effect = "cuts land on section boundaries instead of mid-paragraph"
+side_effects = [
+  "sections longer than size_hard_limit still get hard-split",
+  "may conflict with structure-break advice — compare both candidates",
+]
+confidence = 0.5
+conflicts_with = ["structure_break_structural_boundary", "discourse_split_discourse_unit"]
+verified_by = { method = "seeded", source = "NarrativeQuality dimension actions", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+boundary_primary = { in = ["discourse_unit", "token_limit"] }
+
+[rule.when.document]
+has_headings = true
+
+[[rule]]
+id = "overlap_consistency_enable_overlap"
+issue = "boundary_cleanliness"
+cause = "overlap consistency component is below threshold: consecutive chunks share no overlap under an active context mode"
+trigger = { kind = "dimension_below", dimension = "boundary_cleanliness", threshold = 0.5 }
+recommend = { parameter = "overlap_size", to = 50 }
+expected_effect = "consecutive chunks share a small overlap, smoothing retrieval across boundaries"
+side_effects = [
+  "duplicated content increases embedding/storage volume",
+  "overlapped text can double-count in downstream ranking",
+]
+confidence = 0.5
+verified_by = { method = "seeded", source = "NarrativeQuality dimension actions", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+overlap_size = { eq = 0 }
+context_mode = { not_eq = "none" }
+
+[[rule]]
+id = "size_utilization_low_raise_soft_limit"
+issue = "size_compliance"
+cause = "average chunk length is far below the target size (utilization < 0.6) — chunks are smaller than the packaging intent"
+trigger = { kind = "metric_below", metric = "utilization", threshold = 0.6 }
+recommend = { parameter = "size_soft_limit", to = 450 }
+expected_effect = "larger soft limit lets chunks grow toward the intended size band"
+side_effects = [
+  "fewer, larger chunks; discourse_locality per chunk may drop",
+  "verify against retrieval granularity needs before adopting",
+]
+confidence = 0.45
+verified_by = { method = "seeded", source = "NarrativeQuality dimension actions", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+size_soft_limit = { lt = 450 }
+
+[[rule]]
+id = "distribution_orphan_merge"
+issue = "distribution_uniformity"
+cause = "several orphan chunks (below orphan_threshold) under heading boundaries — short sibling sections stay unmerged"
+trigger = { kind = "metric_above", metric = "orphan_chunks", threshold = 2 }
+recommend = { parameter = "merge_short_sibling_sections", to = true }
+expected_effect = "short sibling sections merge, reducing the tiny-chunk tail of the size distribution"
+side_effects = [
+  "short but genuinely independent sections may be merged into their siblings",
+  "only meaningful when boundary_primary stays heading_boundary",
+]
+confidence = 0.5
+verified_by = { method = "seeded", source = "NarrativeQuality dimension actions", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+boundary_primary = { eq = "heading_boundary" }
+merge_short_sibling_sections = { eq = false }
+
+[[rule]]
+id = "semantic_cohesion_reduce_scale"
+issue = "discourse_locality"
+cause = "discourse_locality score is below threshold — chunks mix too many topics (lexical proxy only; verify manually before acting)"
+trigger = { kind = "dimension_below", dimension = "discourse_locality", threshold = 0.5 }
+recommend = { parameter = "size_soft_limit", to = 300 }
+expected_effect = "a smaller scale tier tightens the topical focus of each chunk"
+side_effects = [
+  "more chunks; context per chunk shrinks, which can hurt definition-example locality",
+  "cohesion is measured by a lexical proxy — manual spot-check advised before tuning against it",
+]
+confidence = 0.4
+conflicts_with = ["size_utilization_low_raise_soft_limit"]
+verified_by = { method = "seeded", source = "NarrativeQuality dimension actions", note = "pending offline optimizer calibration + review_ledger adjudication" }
+
+[rule.when.params]
+size_soft_limit = { gt = 300 }

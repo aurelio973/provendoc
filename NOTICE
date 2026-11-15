@@ -1,0 +1,30 @@
+Provendoc
+Copyright (c) 2026 Provendoc contributors
+
+This project is licensed under the MIT License (see LICENSE).
+
+=== Optional dependencies ===
+
+This product has optional integration points with the following
+third-party components, installed only when explicitly requested via
+pip extras. The MIT license of Provendoc's own code does not
+cover these components.
+
+1. PyMuPDF (optional extra "pdf")
+   Copyright (c) 2015-2026 Artifex Software, Ltd.
+   Licensed under GNU AGPL-3.0 OR a commercial license from Artifex
+   (https://pymupdf.readthedocs.io/). PDF text extraction falls back
+   honestly (auditable degradation) when PyMuPDF is absent.
+
+2. MinerU (optional extra "pdf-layout")
+   Copyright (c) 2024-2026 OpenDataLab
+   Licensed under the MinerU Open Source License
+   (https://github.com/opendatalab/MinerU). Review its terms before
+   commercial use.
+
+3. pyxlsb (spreadsheet extra)
+   Licensed under LGPLv3+ (https://pypi.org/project/pyxlsb/).
+
+4. odfpy (spreadsheet extra)
+   Dual-licensed GPL-2.0+ OR Apache-2.0; consumed under Apache-2.0
+   (https://github.com/eea/odfpy).

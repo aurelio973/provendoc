@@ -1,0 +1,73 @@
+# Provendoc Configuration File
+# Copy to provendoc.toml and adjust as needed.
+# CLI flags override these values.
+
+[provendoc]
+# Dataset
+dataset_dir = "./tests/datasets/txt"
+description = "Configured run"
+
+# Runtime mode: benchmark | analysis | debug
+runtime_mode = "analysis"
+
+# Parallel processing
+enable_parallel = true
+parallel_workers = 0          # 0 = auto (os.cpu_count())
+
+# Parse cache (pickle, keyed on path+size+mtime)
+enable_parse_cache = true
+parse_cache_dir = ".cache/parse"
+
+# Async export (thread pool for file I/O, overlaps with CPU)
+enable_async_export = true
+async_export_workers = 2
+
+# Huge file fast-path
+# 分层原则：内容层（representation）与分块质量评估（evaluation/failure_modes）
+# 默认不降级——大文件恰恰是分块最易退化的场景，越大的文件越需要评估
+# （质量评估成本已由 DensityAdaptation 采样约束在常数级）。降级仅限呈现层
+# 与调试层。
+huge_file_threshold = 524288   # 512 KB
+huge_file_skip_markdown = true
+huge_file_skip_debug = true
+huge_file_skip_representation = false
+huge_file_skip_evaluation = false
+huge_file_skip_failure_modes = false
+huge_file_skip_doc_quality = true
+
+# PDF runtime limits (guards, not filters: 超限不丢文档，只降级昂贵路径
+# 并如实记录原因)。默认均不限制；需要限定单次 run 资源时配置。
+# pdf_max_pages = 500
+# pdf_max_file_bytes = 104857600
+# pdf_max_page_pixels = 50000000
+# pdf_ocr_time_budget_seconds = 600.0   # 超时后剩余页记 budget_exhausted
+# pdf_mineru_timeout_seconds = 300.0
+# 扫描件 OCR 页级进程并行度：默认 4（基准实测约 2.4x）；1 = 串行。
+# 注意与外层 parallel_workers 叠加时的 CPU 占用。
+# pdf_ocr_parallel_workers = 4
+# OCR 语言串：默认自动决定 —— 项目 .tessdata 含 chi_sim.traineddata 时
+# 为 "chi_sim"，否则保持 "eng"。用 chi_sim 而非 chi_sim+eng：中文扫描件
+# 实测单独 chi_sim 汉字更多（加 eng 会分摊置信度，还会附带加载不存在的
+# chi_sim_vert 刷错误日志）。请求的语言若本地无模型，会自动剔除该分量并
+# 在 metadata 记 ocr_language_downgraded_from，不会拿缺模型的串硬跑出乱码。
+# pdf_ocr_language = "chi_sim"
+# 显式 tessdata 目录；默认自动发现项目内 .tessdata（含 chi_sim/eng/osd），
+# 找不到则用系统默认（TESSDATA_PREFIX 或 Tesseract 安装目录）。
+# 系统 Tesseract 只带 eng，中文扫描件在系统目录下抽不到任何汉字。
+# pdf_ocr_tessdata = ".tessdata"
+
+# Artifacts
+enable_debug = true
+enable_report = true
+enable_profiling = true
+enable_raw_export = true
+enable_markdown_export = true
+enable_representation_export = true
+enable_chunked_export = true
+enable_evaluation_export = true
+
+# Run retention
+keep_runs = 3
+
+# Progress reporting
+progress_interval = 50         # print every N files (0 = off)

@@ -1,0 +1,231 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "provendoc"
+version = "0.1.0"
+description = "Evidence-first, domain-aware document ingestion: per-domain semantic representations with auditable Representation Stack Evaluation (RSE) for narrative, config, spreadsheet, code, and record-stream files"
+requires-python = ">=3.10"
+license = "MIT"
+readme = "README.md"
+
+dependencies = [
+    "PyYAML>=6.0",
+    "beautifulsoup4>=4.12",
+    "charset-normalizer>=3.0",
+    "openpyxl>=3.1",
+    "colorama>=0.4",
+    "tomli>=2.0; python_version < '3.11'",
+]
+# NOTE: pandas is NOT a core dependency. Both import sites
+# (core/parsers/table/csv_parser.py, .../excel/backends/pandas_backend.py)
+# guard it with try/except ImportError and degrade honestly (stdlib CSV
+# engine / actionable ImportError) -- the previous hard declaration here
+# contradicted both the code and the README's "no heavy deps" claim.
+
+[project.optional-dependencies]
+# PyMuPDF OCR additionally requires a system Tesseract installation and its
+# tessdata language files; the runtime reports an auditable fallback otherwise.
+pdf = ["PyMuPDF>=1.23"]
+# MinerU's pipeline backend is intentionally opt-in: it installs local model
+# runtime dependencies (including PyTorch) for layout-aware PDF enrichment.
+pdf-layout = ["mineru[pipeline]>=3.4.5"]
+docx = ["python-docx>=1.1"]
+# Legacy Word binary (.doc/.dot) CFB container IO (prereg
+# docx_word_cfb_prereg_v1): text location is handled entirely by an
+# in-house [MS-DOCMD]-spec state machine; olefile is container IO only.
+doc = ["olefile>=0.46"]
+# Code-domain tolerant parsing (tree-sitter grammars for all supported
+# languages: Python, JS/TS, Vue, CSS/SCSS/Less, Java, Go, PHP, C/C++, C#,
+# Rust, Ruby, Swift, Kotlin, Scala, Bash, SQL, Lua, Dart, R, Perl, Zig,
+# and HCL/Terraform).
+code = [
+    "tree-sitter-language-pack>=1.0",
+    # tree-sitter 0.26.0 has a byte-offset corruption regression
+    # (upstream py-tree-sitter#487; fix merged upstream but unreleased):
+    # whole-process access violations (0xC0000005) on real public code
+    # corpora. Re-verified 2026-09-14: under 0.26.0 the code-domain tests
+    # and handcrafted regressions pass, but test_real_public_code_corpus.py
+    # still segfaults — the 256-line truncated corpus does not trigger it,
+    # so misdiagnosis risk is high. 0.25.2 has no such regression
+    # (1590 passed). Unpin condition: once upstream releases the fix
+    # (>= 0.26.1), upgrade, run test_real_public_code_corpus.py +
+    # test_code_domain.py green first, then relax the pin.
+    "tree-sitter>=0.25,<0.26",
+]
+# Extra spreadsheet backends: the optional pandas compatibility engine
+# (CSV engine="pandas" + legacy Excel value view) plus binary/ODF backends
+# (.xlsb via pyxlsb, .ods via odfpy). Core spreadsheet support needs none
+# of these: csv/tsv/psv use the stdlib engine by default and
+# xlsx/xls/xlsm read via core openpyxl.
+spreadsheet = ["pandas>=2.0", "pyxlsb>=1.0", "odfpy>=1.4"]
+parquet = ["pyarrow>=15.1"]
+# REST API server (uvicorn worker): pip install "provendoc[api]"
+# then `provendoc-serve` or uvicorn provendoc.api.app:create_app --factory
+api = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+# Image OCR perspective rescue (image_ocr_perspective_rescue_prereg_v1,
+# 2026-10-16 batch 2): quad-warp rescue for camera-scanned documents whose
+# OCR text activates no domain family. opencv-python is Apache-2.0 (no
+# AGPL/LGPL isolation); it also rides in transitively via pdf-layout's
+# mineru[pipeline]. Lazy-imported at runtime — when absent the rescue is
+# skipped with an auditable debug log; never a hard dependency.
+image-ocr = ["opencv-python>=5"]
+# Ecosystem adapters (src/provendoc/integrations/) are lazy-imported:
+# install only the ecosystem you use. When absent, adapters raise an
+# actionable ImportError pointing at the matching extra.
+#   langchain  -> ProvendocLoader (langchain_core.document_loaders.BaseLoader)
+#   llama-index -> ProvendocReader (llama_index.core.readers.BaseReader)
+# Also enables the SDK convenience chunking entrypoints, which are
+# dependency-free and always available.
+langchain = ["langchain-core>=1.6"]
+llama-index = ["llama-index-core>=0.14"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    # Parallel speedup for the local 18k+ case suite (CI stays serial for
+    # determinism; not enabled there).
+    "pytest-xdist>=3.0",
+    # Exact toolchain pins (2026-10-04): ruff's I001 ordering behavior and
+    # mypy's reporting surface both shift across versions, and gate results
+    # must be reproducible. Upgrading = an explicit change: run the local
+    # full ruff/mypy suite green first, update this file and ci.yml in
+    # lockstep, and note the version pair in that commit.
+    "ruff==0.16.5",
+    "mypy==2.3.1",
+    "tree-sitter-language-pack>=1.0",
+    "tree-sitter>=0.25,<0.26",
+]
+all = ["PyMuPDF>=1.23", "mineru[pipeline]>=3.4.5", "python-docx>=1.1", "olefile>=0.46", "tree-sitter-language-pack>=1.0", "tree-sitter>=0.25,<0.26", "pandas>=2.0", "pyxlsb>=1.0", "odfpy>=1.4", "pyarrow>=15.1", "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+
+[project.scripts]
+provendoc = "provendoc.app:main"
+provendoc-serve = "provendoc.api.server:main"
+
+# review_ledger is a development-side audit CLI (tools/), not shipped.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["provendoc*"]
+
+[tool.setuptools.package-data]
+provendoc = [
+    "runtime/report_template.html",
+    "api/web/*",
+    # versioned recommendation rule table (evaluate(recommend="rules"))
+    "intelligence/recommendation/*.toml",
+    # homoglyph vendor pair (UTS #39 snapshot, SHA256-pinned at load time;
+    # 2026-11-09 packaging batch: ships with the wheel so import works
+    # outside the repo; repo tests/datasets copy remains the dev fallback)
+    "core/foundation/data/confusables/*.json",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# "." first: cross-file imports like `from tests._helper import ...` inside
+# tests/ rely on rootdir being on sys.path (explicitly pinned in the
+# 2026-10-26 directory-migration batch; previously it depended on the
+# launcher implicitly injecting it).
+# "tests" last: root-level test modules (calibration, _helper, ...) stopped
+# being auto-prepended by pytest once test files moved into tests/<group>/
+# subdirectories (pinned in the same 2026-10-26 migration batch).
+pythonpath = [".", "src", "tools", "tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# Corpus data must not be collected as tests (implementation note,
+# 2026-10-05): pytest 9 natively collects YamlFile under tests/datasets
+# (e.g. the sphinx_projects corpus asset
+# pytest/example/nonpython/test_simple.yaml fails as a spec), and
+# test_*.py-shaped corpus assets would be imported as ghost test modules.
+# Keep pytest's default ignore set and append "datasets".
+norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist",
+                 "node_modules", "venv", "{arch}", "datasets"]
+addopts = "-v --tb=short"
+
+# Coverage gate (measured TOTAL 85% on 2026-09-23; fail_under keeps a 1pp
+# fluctuation margin).
+# Run as: pytest --cov=provendoc --cov-report=term
+[tool.coverage.run]
+source = ["provendoc"]
+
+[tool.coverage.report]
+fail_under = 84
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# tests/datasets carries intentionally-broken corpus files (including
+# syntactically invalid .py/.js samples); they are data, not source.
+# examples/datasets is the same kind of curated corpus (incl. dirty/ samples).
+extend-exclude = ["tests/datasets", "examples/datasets"]
+
+[tool.ruff.lint]
+# D enables only the "missing" family: docstring gates for public
+# classes/methods/functions/nested classes/__init__, matching the audit
+# scope of the 2026-09-17 backfill; D100/D104/D105 and style rules stay off.
+select = ["E", "F", "W", "I", "D101", "D102", "D103", "D106", "D107"]
+ignore = ["E501", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# Import-smoke verification scripts: the import itself is the check.
+"benchmarks/verify_all.py" = ["F401"]
+"benchmarks/parser_robustness/verify_packages.py" = ["F401"]
+# The docstring gate covers only the shipped package (src/); tests, tools,
+# scripts, benchmarks, and integration packages are exempt.
+"tests/**" = ["D"]
+"tools/**" = ["D"]
+"scripts/**" = ["D"]
+"benchmarks/**" = ["D"]
+"evalkit/**" = ["D"]
+"integrations/**" = ["D"]
+"demo/**" = ["D"]
+"examples/**" = ["D"]
+# One-shot evidence/sampling scripts under specs/: their value is archived
+# evidence, not maintenance; exempt from docstring, ambiguous-name,
+# import-ordering, lambda, and unused-variable rules.
+"specs/**" = ["D", "E741", "I001", "E731", "F841", "F401"]
+
+[tool.ruff.lint.isort]
+# review_ledger is the in-house audit CLI under tools/ (pytest's pythonpath
+# includes tools); classifying it first-party keeps the blank-line
+# separation from real third parties like pytest.
+known-first-party = ["provendoc", "review_ledger"]
+
+# Type-check gate (introduced 2026-09-18): 100% annotation coverage on the
+# public API surface, no regressions on existing code.
+# Baseline: 345 errors / 91 modules @ mypy 2.3.1 (at introduction); after
+# the 2026-09-26 cleanup rounds the exemption count is zero (324 files clean
+# in a full run; the per-module error-budget baseline
+# tools/mypy_error_baseline.json is empty, and CI ratchets via
+# tools/mypy_budget.py --check — decreases only). New modules are fully
+# checked automatically.
+# python_version is not pinned: it follows the running interpreter. Recent
+# numpy stubs use 3.12+ syntax, so pinning 3.10 would fail to parse on a
+# local 3.13 environment; on the CI 3.10 runner pip installs an older numpy
+# (whose stubs are 3.10-compatible). Both sides hold independently.
+#
+# Legacy type: ignore exemptions (24 sites, retirement deadline 2027-03-31):
+#   - 19 optional-dependency no-redef sites (fitz ×16, tomli ×3): patterned
+#     technical debt, to be cleared in one batch once the repo migrates to
+#     try/except imports or upstream stubs become available;
+#   - 5 logic exemptions (report_generator / email_scenario_dqr /
+#     txt_file_facts ×2 / pdf security): each carries an error code and must
+#     be tightened opportunistically when its function is touched.
+#   New exemptions must never be a bare `type: ignore` (an error code is
+#   mandatory); retire at least 2 per quarter, all gone by 2027-03-31.
+[tool.mypy]
+files = ["src"]
+mypy_path = "src"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
+
+# numpy symbols resolve to Any (its stubs are not followed): smaller
+# analysis surface, faster runs.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+

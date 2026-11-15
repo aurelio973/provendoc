@@ -1,0 +1,13 @@
+# Line-ending policy: the repository stores and checks out LF everywhere.
+# `text=auto` lets git auto-detect binary files (docx/pdf/xlsx fixtures are
+# skipped automatically); `eol=lf` ends the "LF will be replaced by CRLF"
+# warnings on Windows autocrlf=true setups without changing the index,
+# which already stores LF.
+* text=auto eol=lf
+
+# Byte-sensitive corpus & fixtures: git must never rewrite bytes.
+# tests/datasets holds handcrafted dirty fixtures (BOM / truncated multibyte /
+# NEL / tag chars / bidi isolates / soft hyphens ...) and real_public
+# manifests whose exact bytes ARE the test subject. Line-ending
+# normalization would silently change corpus content on Windows checkouts.
+tests/datasets/** -text
